@@ -39,7 +39,7 @@ been executed on the development machine.
 | Ingestion | `cargo test --test ingest_tests` | 18 passed, 0 failed |
 | Network analysis | `cargo test --test pcap_tests` | 12 passed, 0 failed |
 | Performance | `cargo test --test perf_tests -- --nocapture` | 1 passed (measurements below) |
-| Frontend | `npm test` | 18 passed, 0 failed (6 files) |
+| Frontend | `npm test` | 22 passed, 0 failed (7 files) |
 | Frontend types | `npx tsc --noEmit` | clean |
 | Frontend bundle | `npm run build` | clean, 243 kB JS / 25 kB CSS |
 
@@ -63,6 +63,7 @@ been executed on the development machine.
 | Installer | `src-tauri/target/release/bundle/nsis/NULLPLINTH_0.1.0_x64-setup.exe`, 1.95 MiB |
 | Installer signature | not code signed (expected for this project) |
 | Launch test | release binary starts, window title "NULLPLINTH", 35.7 MB working set |
+| Installer test | silent install exit 0 into %LOCALAPPDATA%\NULLPLINTH, installed exe launches, silent uninstall removes the directory |
 | Local database on first launch | `%APPDATA%\com.nullplinth.app\nullplinth.db`, schema v1, FTS5 present, 12 tables |
 
 ### Remaining gaps

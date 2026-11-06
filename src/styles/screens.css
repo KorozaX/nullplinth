@@ -1,0 +1,34 @@
+/* ---------- Shared layouts ---------- */
+.filter-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s3); margin-bottom: var(--s3); }
+.filter-bar .field { min-width: 148px; }
+.filter-bar__grow { flex: 1 1 240px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
+.split--side { grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); }
+@media (max-width: 1120px) { .split--side { grid-template-columns: minmax(0, 1fr); } }
+
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--s3); }
+.form-actions { display: flex; gap: var(--s2); margin-top: var(--s4); }
+.about-list { display: flex; flex-direction: column; gap: var(--s2); font-size: var(--fs-sm); color: var(--fg-secondary); }
+.about-list dt { color: var(--fg-dim); font-size: var(--fs-2xs); letter-spacing: 0.08em; text-transform: uppercase; }
+.about-list dd { margin: 0; }
+
+/* ---------- Network analyzer ---------- */
+.network { display: flex; flex-direction: column; gap: var(--s3); }
+.network__bar { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
+.network__main { display: grid; grid-template-columns: minmax(224px, 288px) minmax(0, 1fr); gap: var(--s3); align-items: start; }
+.network__inspect { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s3); align-items: start; }
+@media (max-width: 1280px) {
+  .network__main { grid-template-columns: minmax(0, 1fr); }
+  .network__inspect { grid-template-columns: minmax(0, 1fr); }
+}
+.record-list--scroll { max-height: 420px; overflow-y: auto; }
+.flow-list { max-height: 520px; overflow-y: auto; }
+
+/* ---------- Settings ---------- */
+.settings-form { max-width: 880px; }
+.settings-note { font-size: var(--fs-xs); color: var(--fg-muted); max-width: 70ch; }
+
+/* ---------- Event detail ---------- */
+.detail-grid { display: flex; flex-direction: column; gap: var(--s4); }
+.detail-section { display: flex; flex-direction: column; gap: var(--s2); }
+.why-matters { font-size: var(--fs-sm); color: var(--fg-muted); }

@@ -1,0 +1,72 @@
+/* NULLPLINTH design tokens: Nothing-OS-inspired industrial minimalism. */
+:root {
+  color-scheme: dark;
+
+  /* Base surfaces */
+  --bg: #0f0f10;
+  --bg-deep: #0a0a0b;
+  --surface: #141416;
+  --surface-raised: #19191c;
+  --surface-hover: #1e1e21;
+  --surface-active: #232327;
+
+  /* 1px lines */
+  --line-faint: #1b1b1e;
+  --line: #262629;
+  --line-strong: #35353a;
+  --border: 1px solid var(--line);
+
+  /* Text */
+  --fg: #eceae4;
+  --fg-secondary: #b4b3ad;
+  --fg-muted: #8b8a85;
+  --fg-dim: #646460;
+
+  /* The single signal colour: critical alerts and selected states only */
+  --signal: #c2302a;
+  --signal-bright: #d8483f;
+  --signal-wash: rgba(194, 48, 42, 0.12);
+  --signal-line: rgba(194, 48, 42, 0.55);
+
+  /* Severity ladder: red is reserved for critical, everything else is neutral */
+  --sev-critical: var(--signal-bright);
+  --sev-high: #e3e0d7;
+  --sev-medium: #b4b3ad;
+  --sev-low: #8b8a85;
+  --sev-info: #646460;
+  --ok: #86a37f;
+
+  /* Type */
+  --font-sans: "Segoe UI", "Inter", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --fs-2xl: 24px;
+  --lh-tight: 1.25;
+  --lh-normal: 1.5;
+
+  /* Spacing scale */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s7: 32px;
+  --s8: 40px;
+
+  /* Structure */
+  --radius: 2px;
+  --radius-lg: 3px;
+  --control-h: 28px;
+  --topbar-h: 60px;
+  --sidebar-w: 236px;
+  --drawer-w: 520px;
+
+  --overlay: rgba(6, 6, 7, 0.62);
+  --trans: 90ms linear;
+}

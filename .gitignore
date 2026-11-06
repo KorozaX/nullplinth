@@ -1,0 +1,52 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.tsbuildinfo
+
+# generated Windows installers / bundles
+src-tauri/target/release/bundle/
+*.msi
+*.nsis.zip
+installers/
+
+# local application data: imported logs, captures and the SQLite database
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+local-data/
+
+# imported security logs and captures (keep only deliberate fixtures)
+*.pcap
+*.pcapng
+!fixtures/**/*.pcap
+!fixtures/**/*.pcapng
+*.evtx
+*.ndjson.gz
+
+# secrets and environment
+.env
+.env.*
+*.pem
+*.key
+
+# test and tool output
+coverage/
+tmp/
+*.log
+*.tsbuildinfo
+test-results/
+
+# OS metadata
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# scratch
+probe-tauri/
+scripts/out/

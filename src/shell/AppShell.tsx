@@ -112,7 +112,7 @@ export function AppShell({ section, onSelect, children }: AppShellProps) {
         <div className="sidebar__foot">
           <strong>Local only</strong>
           <span>No network access</span>
-          <span>v0.1.0</span>
+          <span>v0.2.0</span>
           <span className="sidebar__hint">Alt+1..7 sections &middot; Alt+M mode &middot; F11 fullscreen</span>
         </div>
       </aside>

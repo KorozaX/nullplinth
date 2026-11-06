@@ -1,7 +1,8 @@
 [package]
 name = "nullplinth"
-version = "0.1.0"
+version = "0.2.0"
 description = "NULLPLINTH - local-first security analysis workbench"
+license = "MIT"
 edition = "2021"
 authors = ["NULLPLINTH"]
 

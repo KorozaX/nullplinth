@@ -72,6 +72,8 @@ modified; only parsed records are copied into the local database.
 
 ## License
 
-No license has been selected for this project yet. The repository is currently
-**unlicensed**, which means all rights are reserved by the author. Do not redistribute
-without permission.
+NULLPLINTH is released under the **MIT License**. You may use, copy, modify, merge, publish,
+distribute, sublicense and sell copies of the software, provided the copyright notice and
+license text are included. The software is provided "as is", without warranty of any kind.
+
+See [LICENSE](LICENSE) for the full text.

@@ -3,7 +3,7 @@
 Updated at meaningful milestones. Every line reflects code that exists on disk and has
 been executed on the development machine.
 
-## Status: V1 quality overhaul complete, release verified
+## Status: V1 quality overhaul complete, release 0.2.0 published
 
 ### Toolchain on the development machine
 
@@ -84,10 +84,11 @@ been executed on the development machine.
 
 | Item | Value |
 |------|-------|
-| Application binary | `src-tauri/target/release/nullplinth.exe`, version 0.1.0 |
-| Installer | `src-tauri/target/release/bundle/nsis/NULLPLINTH_0.1.0_x64-setup.exe` (2.00 MiB) |
+| Application binary | `src-tauri/target/release/nullplinth.exe`, version 0.2.0 |
+| Installer | `src-tauri/target/release/bundle/nsis/NULLPLINTH_0.2.0_x64-setup.exe` |
 | Installer test | silent install, launch from installed location, silent uninstall |
 | Signature | not code signed (SmartScreen warning expected) |
+| License | MIT, see LICENSE |
 | Desktop review | screenshots captured from the release build at 2062x1166, 1366x768 and 1024x768 |
 
 ### Remaining gaps

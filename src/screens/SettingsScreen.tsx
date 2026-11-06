@@ -279,7 +279,7 @@ export function SettingsScreen() {
           <dl className="about-list">
             <div>
               <dt>Version</dt>
-              <dd className="mono">0.1.0</dd>
+              <dd className="mono">0.2.0</dd>
             </div>
             <div>
               <dt>Storage</dt>

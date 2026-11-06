@@ -388,9 +388,14 @@ fn rule_connections(conn: &Connection, s: &DetectionSettings, run_id: &str) -> A
 }
 
 pub fn run(app: &tauri::AppHandle, db: &Db) -> AppResult<DetectionRun> {
-    let started = Instant::now();
     let conn = db.conn()?;
-    let settings = load_settings(&conn)?;
+    run_rules(&conn, Some(app))
+}
+
+/// Pure rule runner: no Tauri types, so it can be tested against a plain connection.
+pub fn run_rules(conn: &Connection, app: Option<&tauri::AppHandle>) -> AppResult<DetectionRun> {
+    let started = Instant::now();
+    let settings = load_settings(conn)?;
     let run_id = format!("run-{}", now_ms());
     let mut rules = Vec::new();
     let mut total = 0i64;
@@ -403,12 +408,14 @@ pub fn run(app: &tauri::AppHandle, db: &Db) -> AppResult<DetectionRun> {
     ];
 
     for (name, job) in jobs {
-        let (created, skipped) = job(&conn, &settings, &run_id)?;
+        let (created, skipped) = job(conn, &settings, &run_id)?;
         total += created;
-        let _ = app.emit(
-            "detection-progress",
-            json!({ "rule": name, "alertsCreated": created }),
-        );
+        if let Some(app) = app {
+            let _ = app.emit(
+                "detection-progress",
+                json!({ "rule": name, "alertsCreated": created }),
+            );
+        }
         rules.push(RuleRunSummary {
             rule: name.to_string(),
             alerts_created: created,

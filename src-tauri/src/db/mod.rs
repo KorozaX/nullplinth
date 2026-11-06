@@ -28,12 +28,39 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
+        register_functions(&conn)?;
         Ok(conn)
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+/// CIDR matching lives in SQL so filtering and pagination stay exact.
+fn register_functions(conn: &Connection) -> AppResult<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "ip_in_cidr",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let ip: Option<String> = ctx.get(0)?;
+            let cidr: Option<String> = ctx.get(1)?;
+            let hits = match (ip, cidr) {
+                (Some(ip), Some(cidr)) => match (
+                    ip.parse::<std::net::IpAddr>(),
+                    cidr.parse::<ipnet::IpNet>(),
+                ) {
+                    (Ok(ip), Ok(net)) => net.contains(&ip),
+                    _ => false,
+                },
+                _ => false,
+            };
+            Ok(hits)
+        },
+    )?;
+    Ok(())
 }
 
 fn init_schema(conn: &Connection) -> AppResult<()> {

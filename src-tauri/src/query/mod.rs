@@ -14,7 +14,6 @@ enum Kind {
     Text,
     Int,
     Ip,
-    Timestamp,
 }
 
 fn field_def(field: &str) -> Option<(&'static str, Kind)> {

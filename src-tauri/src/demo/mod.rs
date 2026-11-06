@@ -39,18 +39,8 @@ fn raw(record: serde_json::Value) -> serde_json::Value {
     record
 }
 
-pub fn load(app: &tauri::AppHandle, conn: &Connection) -> AppResult<i64> {
-    if let Some(id) = conn
-        .query_row(
-            "SELECT id FROM datasets WHERE file_hash = ?1 LIMIT 1",
-            [DEMO_HASH],
-            |r| r.get::<_, i64>(0),
-        )
-        .optional()?
-    {
-        return Ok(id);
-    }
-
+/// Build the deterministic demo events. Pure: no database, no Tauri handle.
+pub fn generate() -> Vec<NormalizedEvent> {
     let base = now_ms() - 6 * 3_600_000;
     let mut rng = Rng(0x4e554c4c504c494e);
     let mut events: Vec<NormalizedEvent> = Vec::new();
@@ -232,6 +222,21 @@ pub fn load(app: &tauri::AppHandle, conn: &Connection) -> AppResult<i64> {
         events.push(e);
     }
 
+    events
+}
+
+pub fn load(app: &tauri::AppHandle, conn: &Connection) -> AppResult<i64> {
+    if let Some(id) = conn
+        .query_row(
+            "SELECT id FROM datasets WHERE file_hash = ?1 LIMIT 1",
+            [DEMO_HASH],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
+    let events = generate();
     let tx = conn.unchecked_transaction()?;
     let dataset_id = insert_dataset(
         &tx,

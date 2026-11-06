@@ -1,0 +1,3 @@
+﻿timestamp,src_ip,dst_ip,action,message
+2024-01-15 06:00:00,10.0.0.1,10.0.0.2,allowed,bom row one
+2024-01-15 06:01:00,10.0.0.3,10.0.0.4,blocked,bom row two

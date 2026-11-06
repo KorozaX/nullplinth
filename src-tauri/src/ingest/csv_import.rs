@@ -8,8 +8,9 @@ use super::RecordOutcome;
 use crate::error::{AppError, AppResult};
 use crate::types::{CsvMapping, CsvPreview, NormalizedEvent};
 use serde_json::{Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub const MAX_PREVIEW_ROWS: usize = 50;
@@ -41,8 +42,10 @@ pub fn delimiter_byte(spec: &str) -> AppResult<u8> {
     Ok(first as u8)
 }
 
-fn count_delimiters(line: &str, counts: &mut [usize; 4]) {
+/// Count one delimiter outside quoted strings. Format detection reuses this.
+pub(crate) fn count_delimiter(line: &str, delimiter: char) -> usize {
     let mut in_quotes = false;
+    let mut count = 0usize;
     for ch in line.chars() {
         if ch == '"' {
             in_quotes = !in_quotes;
@@ -51,9 +54,16 @@ fn count_delimiters(line: &str, counts: &mut [usize; 4]) {
         if in_quotes {
             continue;
         }
-        if let Some(position) = CANDIDATE_DELIMITERS.iter().position(|c| *c == ch) {
-            counts[position] += 1;
+        if ch == delimiter {
+            count += 1;
         }
+    }
+    count
+}
+
+fn count_delimiters(line: &str, counts: &mut [usize; 4]) {
+    for (position, delimiter) in CANDIDATE_DELIMITERS.iter().enumerate() {
+        counts[position] += count_delimiter(line, *delimiter);
     }
 }
 
@@ -109,7 +119,7 @@ fn canonical_key(raw: &str) -> String {
 }
 
 /// Heuristic: a header row holds names, not values.
-fn looks_like_header(row: &[String]) -> bool {
+pub(crate) fn looks_like_header(row: &[String]) -> bool {
     if row.iter().any(|cell| {
         let key = canonical_key(cell);
         HEADER_HINTS
@@ -130,6 +140,109 @@ fn looks_like_header(row: &[String]) -> bool {
     !has_value
 }
 
+/// Column aliases used to pre-fill the import wizard mapping (users can override).
+const SUGGESTED_FIELDS: [(&str, &[&str]); 15] = [
+    (
+        "timestamp",
+        &[
+            "ts", "time", "timestamp", "datetime", "eventtime", "timegenerated", "logtime",
+            "date", "occurred", "when", "insertionstring",
+        ],
+    ),
+    (
+        "srcIp",
+        &[
+            "srcip", "sourceip", "src", "source", "srcaddr", "sourceaddress", "clientip",
+            "ipaddress", "client", "ip",
+        ],
+    ),
+    (
+        "dstIp",
+        &[
+            "dstip", "destip", "destinationip", "dst", "dest", "destination", "dstaddr",
+            "destinationaddress", "serverip", "server",
+        ],
+    ),
+    ("srcPort", &["srcport", "sourceport", "sport"]),
+    (
+        "dstPort",
+        &["dstport", "destport", "destinationport", "dport", "port", "portnumber"],
+    ),
+    ("transport", &["transport", "proto", "protocol"]),
+    ("appProto", &["appproto", "service", "application"]),
+    (
+        "action",
+        &["action", "eventaction", "outcome", "decision", "verdict"],
+    ),
+    (
+        "username",
+        &["username", "user", "userid", "account", "subjectusername"],
+    ),
+    (
+        "hostname",
+        &[
+            "hostname", "host", "workstation", "computername", "computer", "device",
+        ],
+    ),
+    (
+        "processName",
+        &["processname", "process", "image", "applicationname", "program"],
+    ),
+    (
+        "message",
+        &["message", "msg", "description", "detail", "summary", "eventdescription"],
+    ),
+    ("severity", &["severity", "level", "priority"]),
+    ("category", &["category", "eventcategory"]),
+    (
+        "eventType",
+        &["eventtype", "eventname", "type"],
+    ),
+];
+
+/// Guess a normalized-field -> column mapping from common header aliases.
+pub(crate) fn suggest_mapping(columns: &[String]) -> HashMap<String, String> {
+    let mut mapping: HashMap<String, String> = HashMap::new();
+    for column in columns {
+        let key = canonical_key(column);
+        if key.is_empty() {
+            continue;
+        }
+        for (field, aliases) in SUGGESTED_FIELDS.iter() {
+            if mapping.contains_key(*field) {
+                continue;
+            }
+            if aliases.iter().any(|alias| canonical_key(alias) == key) {
+                mapping.insert((*field).to_string(), column.trim().to_string());
+                break;
+            }
+        }
+    }
+    mapping
+}
+
+fn open_without_bom(path: &Path) -> AppResult<File> {
+    let mut file = File::open(path)?;
+    let mut head = [0u8; 3];
+    let read = file.read(&mut head)?;
+    let offset = if read == 3 && head == [0xEF, 0xBB, 0xBF] { 3 } else { 0 };
+    file.seek(SeekFrom::Start(offset as u64))?;
+    Ok(file)
+}
+
+fn count_data_lines(path: &Path, has_header: bool) -> AppResult<i64> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut total = 0i64;
+    for line in reader.lines() {
+        let line = line?;
+        if !line.trim().is_empty() {
+            total += 1;
+        }
+    }
+    Ok((total - if has_header { 1 } else { 0 }).max(0))
+}
+
 /// Read the first rows of a CSV file for the import wizard.
 pub fn preview(path: &str) -> AppResult<CsvPreview> {
     let file_path = Path::new(path);
@@ -137,7 +250,7 @@ pub fn preview(path: &str) -> AppResult<CsvPreview> {
         return Err(AppError::msg(format!("file does not exist: {path}")));
     }
     let delimiter = detect_delimiter(file_path)?;
-    let file = File::open(file_path)?;
+    let file = open_without_bom(file_path)?;
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter as u8)
         .has_headers(false)
@@ -170,6 +283,9 @@ pub fn preview(path: &str) -> AppResult<CsvPreview> {
     for row in rows.iter_mut() {
         row.resize(width, String::new());
     }
+    if let Some(cell) = rows[0].first_mut() {
+        *cell = normalize::strip_bom(cell).to_string();
+    }
     let has_header = looks_like_header(&rows[0]);
     let columns: Vec<String> = if has_header {
         rows[0].clone()
@@ -183,7 +299,15 @@ pub fn preview(path: &str) -> AppResult<CsvPreview> {
     };
     let mut data_rows = data_rows;
     data_rows.truncate(MAX_PREVIEW_ROWS);
+    let suggested_mapping = if has_header {
+        suggest_mapping(&columns)
+    } else {
+        HashMap::new()
+    };
+    let estimated_rows = count_data_lines(file_path, has_header)?;
     Ok(CsvPreview {
+        suggested_mapping,
+        estimated_rows: Some(estimated_rows),
         columns,
         rows: data_rows,
         detected_delimiter: delimiter.to_string(),
@@ -346,8 +470,7 @@ pub fn stream(
     sink: &mut dyn FnMut(i64, RecordOutcome) -> AppResult<()>,
 ) -> AppResult<()> {
     let delimiter = delimiter_byte(&mapping.delimiter)?;
-    let file = File::open(path)
-        .map_err(|e| AppError::msg(format!("cannot open {}: {e}", path.display())))?;
+    let file = open_without_bom(path)?;
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(false)
@@ -369,7 +492,10 @@ pub fn stream(
                 continue;
             }
         };
-        let row: Vec<String> = record.iter().map(|cell| cell.to_string()).collect();
+        let mut row: Vec<String> = record.iter().map(|cell| cell.to_string()).collect();
+        if let Some(cell) = row.first_mut() {
+            *cell = normalize::strip_bom(cell).to_string();
+        }
         if row.iter().all(|cell| cell.trim().is_empty()) {
             continue;
         }

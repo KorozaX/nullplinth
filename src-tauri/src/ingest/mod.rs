@@ -5,14 +5,19 @@
 
 pub mod csv_import;
 pub mod detect;
+pub mod firewall;
+pub mod generic_text;
 pub mod json;
+pub mod linux_auth;
 pub mod manager;
 pub mod normalize;
 pub mod suricata;
+pub mod syslog;
+pub mod web_access;
 pub mod zeek;
 
 use crate::error::{AppError, AppResult};
-use crate::types::{CsvMapping, CsvPreview, ImportOptions, ImportResult, NormalizedEvent};
+use crate::types::{CsvMapping, CsvPreview, ImportOptions, ImportPreview, ImportResult, NormalizedEvent};
 use std::path::Path;
 
 pub use detect::Format;
@@ -20,6 +25,20 @@ pub use manager::import_with_progress;
 
 /// One parsed record: the normalized event, or the reason it was skipped.
 pub type RecordOutcome = Result<NormalizedEvent, String>;
+
+/// OWNER: data-engine. Inspect any file and report the detected format with samples,
+/// so the UI can warn before importing an unfamiliar log.
+pub fn preview_import(path: &str) -> AppResult<ImportPreview> {
+    let detection = detect::detect_full(Path::new(path))?;
+    Ok(ImportPreview {
+        format: detection.format.as_str().to_string(),
+        format_label: detection.format.label().to_string(),
+        confidence: detection.confidence,
+        sample_lines: detection.sample_lines,
+        estimated_records: detection.estimated_records,
+        warnings: detection.warnings,
+    })
+}
 
 /// Read the first rows of a CSV file so the UI can ask the user for a mapping.
 pub fn preview_csv(path: &str) -> AppResult<CsvPreview> {
@@ -86,5 +105,10 @@ pub(crate) fn stream_records(
                 "CSV imports need an explicit column mapping; call preview_csv first",
             )),
         },
+        Format::LinuxAuth => linux_auth::stream(path, &mut wrapper),
+        Format::Syslog => syslog::stream(path, &mut wrapper),
+        Format::WebAccess => web_access::stream(path, &mut wrapper),
+        Format::Firewall => firewall::stream(path, &mut wrapper),
+        Format::GenericText => generic_text::stream(path, &mut wrapper),
     }
 }

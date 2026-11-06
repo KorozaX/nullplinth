@@ -268,3 +268,23 @@ pub fn object_without(record: &Value, remove: &[&str]) -> Value {
         None => Value::Object(Default::default()),
     }
 }
+
+/// Strip a UTF-8 BOM that some Windows tools prepend to the first line.
+pub fn strip_bom(input: &str) -> &str {
+    input.strip_prefix('\u{feff}').unwrap_or(input)
+}
+
+/// Raw record for line-oriented formats: keeps the original line verbatim.
+pub fn raw_line(line: &str) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("line".to_string(), Value::String(line.to_string()));
+    Value::Object(map)
+}
+
+/// Raw record that keeps the original line plus the parsed key/value fields.
+pub fn raw_line_with_fields(line: &str, fields: serde_json::Map<String, Value>) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("line".to_string(), Value::String(line.to_string()));
+    map.insert("fields".to_string(), Value::Object(fields));
+    Value::Object(map)
+}

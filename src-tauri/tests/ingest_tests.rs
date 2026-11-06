@@ -99,6 +99,7 @@ struct Row {
     dst_port: Option<i64>,
     transport: Option<String>,
     app_proto: Option<String>,
+    process_name: Option<String>,
     action: Option<String>,
     username: Option<String>,
     hostname: Option<String>,
@@ -125,7 +126,7 @@ fn events_of(db: &Db, dataset_id: i64) -> Vec<Row> {
     let mut statement = conn
         .prepare(
             "SELECT ts, category, event_type, severity, src_ip, dst_ip, src_port, dst_port,
-                    transport, app_proto, action, username, hostname, message, attrs, raw
+                    transport, app_proto, process_name, action, username, hostname, message, attrs, raw
              FROM events WHERE dataset_id = ?1 ORDER BY id",
         )
         .expect("prepare");
@@ -144,6 +145,7 @@ fn events_of(db: &Db, dataset_id: i64) -> Vec<Row> {
                 dst_port: record.get("dst_port")?,
                 transport: record.get("transport")?,
                 app_proto: record.get("app_proto")?,
+                process_name: record.get("process_name")?,
                 action: record.get("action")?,
                 username: record.get("username")?,
                 hostname: record.get("hostname")?,
@@ -154,6 +156,14 @@ fn events_of(db: &Db, dataset_id: i64) -> Vec<Row> {
         })
         .expect("query");
     rows.map(|row| row.expect("row")).collect()
+}
+
+fn utc_ms(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> i64 {
+    let naive = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .unwrap()
+        .and_hms_opt(hour, minute, second)
+        .unwrap();
+    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc).timestamp_millis()
 }
 
 fn event_count(db: &Db, dataset_id: i64) -> i64 {
@@ -679,4 +689,437 @@ fn parse_all_reports_per_record_warnings_without_database() {
     assert_eq!(warnings.len(), 2);
     assert_eq!(events[0].source_type, "ndjson");
     assert_eq!(events[0].ts, 1_709_287_200_000);
+}
+
+// ------------------------------------------- task-8: text formats + preview
+
+#[test]
+fn detects_new_formats_from_content_not_extension() {
+    assert_eq!(
+        ingest::detect_format(&fixture_path("linux_auth.log")).unwrap(),
+        Format::LinuxAuth
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("syslog.log")).unwrap(),
+        Format::Syslog
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("apache_access.log")).unwrap(),
+        Format::WebAccess
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("nginx_access.log")).unwrap(),
+        Format::WebAccess
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("firewall_kv.log")).unwrap(),
+        Format::Firewall
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("generic_text.log")).unwrap(),
+        Format::GenericText
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("csv_ambiguous.log")).unwrap(),
+        Format::GenericText
+    );
+    assert_eq!(
+        ingest::detect_format(&fixture_path("csv_bom.csv")).unwrap(),
+        Format::Csv
+    );
+    // a space + key=value log is never CSV
+    assert_ne!(
+        ingest::detect_format(&fixture_path("firewall_kv.log")).unwrap(),
+        Format::Csv
+    );
+    for key in [
+        "linux_auth",
+        "syslog",
+        "web_access",
+        "firewall",
+        "generic_text",
+        "suricata",
+        "zeek",
+        "json",
+        "ndjson",
+        "csv",
+    ] {
+        assert!(
+            Format::from_source_type(key).is_some(),
+            "source type key not accepted: {key}"
+        );
+    }
+}
+
+#[test]
+fn preview_import_reports_formats_confidence_and_estimates() {
+    let firewall = ingest::preview_import(&fixture_path("firewall_kv.log")).expect("preview");
+    assert_eq!(firewall.format, "firewall");
+    assert_eq!(firewall.confidence, "high");
+    assert!(!firewall.format_label.is_empty());
+    assert!(!firewall.sample_lines.is_empty());
+    assert!(firewall.sample_lines.len() <= 12);
+    assert_eq!(firewall.estimated_records, Some(6));
+
+    let apache = ingest::preview_import(&fixture_path("apache_access.log")).expect("preview");
+    assert_eq!(apache.format, "web_access");
+    assert_eq!(apache.confidence, "high");
+
+    let generic = ingest::preview_import(&fixture_path("generic_text.log")).expect("preview");
+    assert_eq!(generic.format, "generic_text");
+    assert_eq!(generic.confidence, "low");
+    assert!(!generic.warnings.is_empty());
+
+    let ambiguous = ingest::preview_import(&fixture_path("csv_ambiguous.log")).expect("preview");
+    assert_eq!(ambiguous.format, "generic_text");
+    assert!(!ambiguous.warnings.is_empty());
+
+    // extension is a hint only: a space/key=value .csv must not be called CSV
+    let preview_csv = ingest::preview_csv(&fixture_path("csv_bom.csv")).expect("preview csv");
+    assert!(preview_csv.has_header);
+    assert_eq!(
+        preview_csv.suggested_mapping.get("timestamp").map(|value| value.as_str()),
+        Some("timestamp")
+    );
+    assert_eq!(preview_csv.estimated_rows, Some(2));
+}
+
+#[test]
+fn imports_linux_auth_log() {
+    use chrono::Datelike;
+    let temp = TempDb::new();
+    let result = import_fixture(&temp.db, "linux_auth.log", None, None);
+    assert_eq!(result.imported, 6);
+    assert_eq!(result.skipped, 0);
+    let rows = events_of(&temp.db, result.dataset_id);
+    let year = chrono::Utc::now().year();
+
+    assert_eq!(rows[0].category.as_deref(), Some("authentication"));
+    assert_eq!(rows[0].event_type.as_deref(), Some("ssh"));
+    assert_eq!(rows[0].action.as_deref(), Some("failed"));
+    assert_eq!(rows[0].username.as_deref(), Some("admin"));
+    assert_eq!(rows[0].src_ip.as_deref(), Some("203.0.113.9"));
+    assert_eq!(rows[0].hostname.as_deref(), Some("server-01"));
+    assert_eq!(rows[0].process_name.as_deref(), Some("sshd"));
+    assert_eq!(rows[0].ts, utc_ms(year, 1, 15, 6, 1, 29));
+    assert_eq!(rows[0].attr_str("authMethod").as_deref(), Some("password"));
+
+    assert_eq!(rows[2].action.as_deref(), Some("success"));
+    assert_eq!(rows[2].username.as_deref(), Some("rjones"));
+
+    assert_eq!(rows[3].event_type.as_deref(), Some("sudo"));
+    assert_eq!(rows[3].action.as_deref(), Some("success"));
+
+    assert_eq!(rows[4].action.as_deref(), Some("failed"));
+
+    assert_eq!(rows[5].action.as_deref(), Some("failed"));
+    assert_eq!(rows[5].src_ip.as_deref(), Some("198.51.100.7"));
+    assert_eq!(rows[5].username.as_deref(), Some("admin"));
+}
+
+#[test]
+fn imports_syslog_and_rfc5424() {
+    let temp = TempDb::new();
+    let result = import_fixture(&temp.db, "syslog.log", None, None);
+    assert_eq!(result.imported, 4);
+    assert_eq!(result.skipped, 0);
+    let rows = events_of(&temp.db, result.dataset_id);
+
+    assert_eq!(rows[0].event_type.as_deref(), Some("syslog"));
+    assert_eq!(rows[0].hostname.as_deref(), Some("router-01"));
+    assert_eq!(rows[0].process_name.as_deref(), Some("dhclient"));
+    assert_eq!(rows[0].category, None);
+    assert!(
+        rows[0]
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("DHCPREQUEST")
+    );
+
+    assert_eq!(rows[2].ts, utc_ms(2024, 1, 15, 6, 3, 0));
+    assert_eq!(rows[2].severity, "high");
+    assert_eq!(rows[2].hostname.as_deref(), Some("fw-01"));
+    assert_eq!(rows[2].process_name.as_deref(), Some("app"));
+    assert_eq!(rows[2].message.as_deref(), Some("user login succeeded"));
+    assert_eq!(rows[2].attrs.get("priority").and_then(|value| value.as_i64()), Some(34));
+}
+
+#[test]
+fn imports_apache_and_nginx_access_logs() {
+    let temp = TempDb::new();
+    let apache = import_fixture(&temp.db, "apache_access.log", None, None);
+    assert_eq!(apache.imported, 3);
+    assert_eq!(apache.skipped, 0);
+    let rows = events_of(&temp.db, apache.dataset_id);
+    assert_eq!(rows[0].category.as_deref(), Some("web"));
+    assert_eq!(rows[0].event_type.as_deref(), Some("http"));
+    assert_eq!(rows[0].src_ip.as_deref(), Some("192.168.1.105"));
+    assert_eq!(rows[0].username.as_deref(), Some("rjones"));
+    assert_eq!(rows[0].message.as_deref(), Some("GET /index.html 200"));
+    assert_eq!(rows[0].ts, utc_ms(2024, 1, 15, 6, 1, 29));
+    assert_eq!(rows[0].attrs.get("status").and_then(|value| value.as_i64()), Some(200));
+    assert_eq!(rows[0].attrs.get("bytes").and_then(|value| value.as_i64()), Some(1043));
+    assert_eq!(rows[0].attr_str("userAgent").as_deref(), Some("Mozilla/5.0"));
+    assert_eq!(
+        rows[1].attr_str("referrer").as_deref(),
+        Some("http://example.com/")
+    );
+
+    let nginx = import_fixture(&temp.db, "nginx_access.log", None, None);
+    assert_eq!(nginx.imported, 2);
+    assert_eq!(nginx.skipped, 0);
+    let rows = events_of(&temp.db, nginx.dataset_id);
+    assert_eq!(rows[1].message.as_deref(), Some("DELETE /api/user/1 403"));
+    assert_eq!(rows[1].attrs.get("status").and_then(|value| value.as_i64()), Some(403));
+}
+
+#[test]
+fn imports_firewall_key_value_log() {
+    let temp = TempDb::new();
+    let result = import_fixture(&temp.db, "firewall_kv.log", None, None);
+    assert_eq!(result.imported, 6);
+    assert_eq!(result.skipped, 0);
+    let rows = events_of(&temp.db, result.dataset_id);
+
+    assert_eq!(rows[0].category.as_deref(), Some("network"));
+    assert_eq!(rows[0].event_type.as_deref(), Some("firewall"));
+    assert_eq!(rows[0].action.as_deref(), Some("allowed"));
+    assert_eq!(rows[0].transport.as_deref(), Some("tcp"));
+    assert_eq!(rows[0].src_ip.as_deref(), Some("192.168.1.105"));
+    assert_eq!(rows[0].dst_ip.as_deref(), Some("142.250.180.14"));
+    assert_eq!(rows[0].dst_port, Some(443));
+    assert_eq!(rows[0].username.as_deref(), Some("rjones"));
+    assert_eq!(rows[0].ts, utc_ms(2024, 1, 15, 6, 1, 29));
+    assert_eq!(rows[0].attr_str("actionRaw").as_deref(), Some("ALLOW"));
+    assert_eq!(rows[0].attr_i64("failedAttempts"), Some(0));
+
+    assert_eq!(rows[1].action.as_deref(), Some("blocked"));
+    assert_eq!(rows[1].transport.as_deref(), Some("udp"));
+    assert_eq!(rows[1].src_port, Some(5353));
+    assert_eq!(rows[1].dst_port, Some(53));
+
+    // failed>0 overrides the firewall verb
+    assert_eq!(rows[2].action.as_deref(), Some("failed"));
+    assert_eq!(rows[2].attr_i64("failedAttempts"), Some(1));
+    assert_eq!(rows[2].attr_str("reason").as_deref(), Some("bruteforce"));
+
+    assert_eq!(rows[3].action.as_deref(), Some("blocked"));
+
+    // proto= key still sets transport, app= sets app_proto
+    assert_eq!(rows[4].transport.as_deref(), Some("tcp"));
+    assert_eq!(rows[4].app_proto.as_deref(), Some("dns"));
+
+    // invalid IP and port are dropped to NULL, the record is still imported
+    assert_eq!(rows[5].src_ip, None);
+    assert_eq!(rows[5].dst_port, None);
+}
+
+#[test]
+fn imports_generic_text_without_inventing_fields() {
+    let temp = TempDb::new();
+    let result = import_fixture(&temp.db, "generic_text.log", None, None);
+    assert_eq!(result.imported, 4);
+    assert_eq!(result.skipped, 0);
+    let rows = events_of(&temp.db, result.dataset_id);
+
+    assert_eq!(rows[0].ts, 0);
+    assert_eq!(rows[0].category, None);
+    assert_eq!(rows[0].event_type, None);
+    assert_eq!(rows[0].src_ip, None);
+    assert_eq!(rows[0].severity, "info");
+    assert_eq!(rows[0].message.as_deref(), Some("starting service nullplinth"));
+    assert_eq!(rows[0].attrs.get("timestampParsed").and_then(|value| value.as_bool()), Some(false));
+    assert_eq!(
+        rows[0].raw.get("line").and_then(|value| value.as_str()),
+        Some("starting service nullplinth")
+    );
+    assert_eq!(rows[0].attrs.get("lineNumber").and_then(|value| value.as_i64()), Some(1));
+
+    assert_eq!(rows[2].ts, utc_ms(2024, 1, 15, 6, 7, 0));
+    assert_eq!(rows[2].attrs.get("timestampParsed").and_then(|value| value.as_bool()), Some(true));
+}
+
+#[test]
+fn imports_bom_and_quoted_csv() {
+    // UTF-8 BOM CSV: preview strips the BOM and suggests the mapping
+    let preview = ingest::preview_csv(&fixture_path("csv_bom.csv")).expect("preview bom csv");
+    assert!(preview.has_header);
+    assert_eq!(preview.columns.first().map(|value| value.as_str()), Some("timestamp"));
+    assert_eq!(preview.estimated_rows, Some(2));
+    let mapping = CsvMapping {
+        delimiter: preview.detected_delimiter.clone(),
+        has_header: preview.has_header,
+        timestamp_column: preview.suggested_mapping.get("timestamp").cloned(),
+        timestamp_format: None,
+        column_map: preview.suggested_mapping.clone(),
+    };
+    let temp = TempDb::new();
+    let result = import_fixture(&temp.db, "csv_bom.csv", None, Some(mapping));
+    assert_eq!(result.imported, 2);
+    assert_eq!(result.skipped, 0);
+    let rows = events_of(&temp.db, result.dataset_id);
+    assert_eq!(rows[0].ts, utc_ms(2024, 1, 15, 6, 0, 0));
+    assert_eq!(rows[0].src_ip.as_deref(), Some("10.0.0.1"));
+    assert_eq!(rows[0].dst_ip.as_deref(), Some("10.0.0.2"));
+    assert_eq!(rows[0].action.as_deref(), Some("allowed"));
+    assert_eq!(rows[0].message.as_deref(), Some("bom row one"));
+    assert_eq!(rows[1].action.as_deref(), Some("blocked"));
+
+    // quoted commas must stay inside the message cell
+    let preview = ingest::preview_csv(&fixture_path("csv_quoted.csv")).expect("preview quoted csv");
+    let mapping = CsvMapping {
+        delimiter: preview.detected_delimiter.clone(),
+        has_header: true,
+        timestamp_column: Some("timestamp".to_string()),
+        timestamp_format: None,
+        column_map: [
+            ("srcIp".to_string(), "src_ip".to_string()),
+            ("message".to_string(), "message".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    };
+    let temp = TempDb::new();
+    let result = import_fixture(&temp.db, "csv_quoted.csv", None, Some(mapping));
+    assert_eq!(result.imported, 2);
+    let rows = events_of(&temp.db, result.dataset_id);
+    assert_eq!(rows[0].message.as_deref(), Some("connection failed, retrying"));
+    assert_eq!(rows[0].src_ip.as_deref(), Some("10.0.0.1"));
+    assert_eq!(rows[0].raw.get("message").and_then(|value| value.as_str()), Some("connection failed, retrying"));
+}
+
+#[test]
+fn forced_format_and_missing_timestamp_are_handled() {
+    let temp = TempDb::new();
+    let options = ImportOptions {
+        path: fixture_path("missing_timestamp_firewall.log"),
+        name: Some("forced-firewall".to_string()),
+        source_type: Some("firewall".to_string()),
+        csv: None,
+    };
+    let result = ingest::import_with_progress(&temp.db, &options, &mut |_progress| {})
+        .expect("forced firewall import");
+    assert_eq!(result.imported, 1);
+    assert_eq!(result.skipped, 1);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("timestamp")),
+        "warnings: {:?}",
+        result.warnings
+    );
+
+    let bad = ImportOptions {
+        path: fixture_path("firewall_kv.log"),
+        name: None,
+        source_type: Some("nonsense".to_string()),
+        csv: None,
+    };
+    assert!(ingest::import_with_progress(&temp.db, &bad, &mut |_progress| {}).is_err());
+}
+
+fn example_files_dir() -> Option<PathBuf> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("Example Files");
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn real_example_files_import_correctly() {
+    let Some(dir) = example_files_dir() else {
+        eprintln!("Example Files directory not present; skipping real-file test");
+        return;
+    };
+
+    // firewall.log was misdetected as CSV before task-8; it must import as firewall.
+    let firewall_path = dir.join("firewall.log").to_string_lossy().into_owned();
+    let preview = ingest::preview_import(&firewall_path).expect("preview firewall.log");
+    assert_eq!(preview.format, "firewall");
+    assert_eq!(preview.confidence, "high");
+    assert_eq!(preview.estimated_records, Some(500));
+
+    let temp = TempDb::new();
+    let options = ImportOptions {
+        path: firewall_path,
+        name: Some("firewall.log".to_string()),
+        source_type: None,
+        csv: None,
+    };
+    let result = ingest::import_with_progress(&temp.db, &options, &mut |_progress| {})
+        .expect("import firewall.log");
+    assert_eq!(result.imported, 500);
+    assert_eq!(result.skipped, 0);
+    assert_eq!(event_count(&temp.db, result.dataset_id), 500);
+    let rows = events_of(&temp.db, result.dataset_id);
+    assert!(rows.iter().all(|row| row.ts > 0));
+    // real file: ALLOW lines -> allowed, BLOCK lines carry failed>0 -> failed
+    assert!(rows.iter().any(|row| row.action.as_deref() == Some("failed")));
+    assert!(rows.iter().any(|row| row.action.as_deref() == Some("allowed")));
+    assert!(rows.iter().any(|row| row.attr_i64("failedAttempts").unwrap_or(0) > 0));
+    assert!(rows
+        .iter()
+        .all(|row| row.category.as_deref() == Some("network")));
+    let datasets = db::list_datasets(&temp.db.conn().expect("connection")).expect("datasets");
+    assert_eq!(datasets[0].source_type, "firewall");
+    assert_eq!(datasets[0].record_count, 500);
+
+    // windows_event.csv must preview with a suggested timestamp mapping and import.
+    let windows_path = dir.join("windows_event.csv").to_string_lossy().into_owned();
+    let csv_preview = ingest::preview_csv(&windows_path).expect("preview windows_event.csv");
+    assert!(csv_preview.has_header);
+    assert_eq!(
+        csv_preview.columns.first().map(|value| value.as_str()),
+        Some("EventID")
+    );
+    assert_eq!(
+        csv_preview.suggested_mapping.get("timestamp").map(|value| value.as_str()),
+        Some("TimeGenerated")
+    );
+    assert_eq!(
+        csv_preview.suggested_mapping.get("srcIp").map(|value| value.as_str()),
+        Some("SourceIP")
+    );
+    assert_eq!(csv_preview.estimated_rows, Some(500));
+
+    let timestamp_column = csv_preview.suggested_mapping.get("timestamp").cloned();
+    let mut column_map = csv_preview.suggested_mapping.clone();
+    column_map.remove("timestamp");
+    let mapping = CsvMapping {
+        delimiter: csv_preview.detected_delimiter.clone(),
+        has_header: csv_preview.has_header,
+        timestamp_column,
+        timestamp_format: None,
+        column_map,
+    };
+    let temp = TempDb::new();
+    let options = ImportOptions {
+        path: windows_path,
+        name: Some("windows_event.csv".to_string()),
+        source_type: None,
+        csv: Some(mapping),
+    };
+    let result = ingest::import_with_progress(&temp.db, &options, &mut |_progress| {})
+        .expect("import windows_event.csv");
+    assert_eq!(result.imported, 500);
+    assert_eq!(result.skipped, 0);
+    let rows = events_of(&temp.db, result.dataset_id);
+    assert_eq!(rows[0].ts, utc_ms(2024, 1, 15, 6, 0, 50));
+    assert_eq!(rows[0].src_ip.as_deref(), Some("10.0.0.14"));
+    assert_eq!(rows[0].username.as_deref(), Some("rjones"));
+    assert_eq!(rows[0].hostname.as_deref(), Some("SERVER-FILE-02"));
+    assert_eq!(rows[0].event_type.as_deref(), Some("PrivilegeUse"));
+    assert_eq!(
+        rows[0].message.as_deref(),
+        Some("Special privileges assigned to new logon")
+    );
+    // EventID / LogonType / Status stay in attrs instead of being dropped
+    assert_eq!(rows[0].attrs.get("EventID").and_then(|value| value.as_str()), Some("4672"));
 }

@@ -7,7 +7,9 @@ authors = ["NULLPLINTH"]
 
 [lib]
 name = "nullplinth_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# rlib only: the cdylib/staticlib targets exist for Tauri mobile and overflow the
+# MinGW export ordinal limit under the GNU toolchain. Desktop builds do not need them.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

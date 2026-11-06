@@ -598,7 +598,7 @@ fn layer_names(detail: &nullplinth_lib::types::PacketDetail) -> Vec<String> {
 /// Page through the packet list to collect up to limit rows (page size is capped at 500).
 fn packet_sample(conn: &Connection, capture_id: i64, limit: usize) -> Vec<PacketRow> {
     let mut out: Vec<PacketRow> = Vec::new();
-    let mut page = 0u32;
+    let mut page = 1u32;
     while out.len() < limit {
         let query = PacketQuery {
             capture_id: Some(capture_id),

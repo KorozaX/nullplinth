@@ -146,6 +146,7 @@ export interface EventQuery {
   text: string | null;
   sort: string;
   sortDir: "asc" | "desc";
+  /** 1-based page number: 1 is the first page. */
   page: number;
   pageSize: number;
 }
@@ -252,6 +253,7 @@ export interface PacketQuery {
   toTs: number | null;
   sort: string;
   sortDir: "asc" | "desc";
+  /** 1-based page number: 1 is the first page. */
   page: number;
   pageSize: number;
 }

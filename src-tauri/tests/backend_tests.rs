@@ -276,3 +276,37 @@ fn deleting_a_dataset_removes_its_events() {
     assert_eq!(after, 0);
     assert!(before > 0);
 }
+/// Regression: the UI asks for page 1 and a search returning exactly one page of
+/// rows must show them. Previously the backend treated page 1 as an offset of one
+/// page, so such searches appeared empty (the reported "User equals root" bug).
+#[test]
+fn first_page_returns_matching_rows() {
+    let db = temp_db("pagination");
+    seed(&db, demo::generate());
+    let conn = db.conn().unwrap();
+
+    let mut q = EventQuery {
+        page: 1,
+        page_size: 12,
+        ..Default::default()
+    };
+    q.filters = vec![FilterRow {
+        field: "srcIp".into(),
+        op: "eq".into(),
+        value: "203.0.113.44".into(),
+    }];
+    let first = query::query_events(&conn, &q).unwrap();
+    assert_eq!(first.total, 12, "filter matches exactly one page of rows");
+    assert_eq!(first.events.len(), 12, "page 1 must contain those rows");
+    assert_eq!(first.page, 1);
+
+    q.page = 2;
+    let second = query::query_events(&conn, &q).unwrap();
+    assert!(second.events.is_empty(), "page 2 has no rows left");
+
+    // Page 0 is clamped to the first page rather than skipping data.
+    q.page = 0;
+    let clamped = query::query_events(&conn, &q).unwrap();
+    assert_eq!(clamped.events.len(), 12);
+    assert_eq!(clamped.page, 1);
+}

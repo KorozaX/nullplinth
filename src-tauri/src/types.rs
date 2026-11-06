@@ -226,6 +226,7 @@ pub struct EventQuery {
     pub sort: String,
     #[serde(default = "default_sort_dir")]
     pub sort_dir: String,
+    /// 1-based page number: 1 is the first page.
     #[serde(default)]
     pub page: u32,
     #[serde(default = "default_page_size")]

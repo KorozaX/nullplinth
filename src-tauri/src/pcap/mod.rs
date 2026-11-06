@@ -617,7 +617,9 @@ pub fn search_packets(conn: &Connection, query: &PacketQuery) -> AppResult<Packe
         "DESC"
     };
     let page_size = query.page_size.clamp(1, 500) as i64;
-    let offset = (query.page as i64) * page_size;
+    // Pages are 1-based: page 1 is the first page.
+    let page = query.page.max(1);
+    let offset = (page as i64 - 1) * page_size;
     let sql = format!(
         "SELECT {PACKET_COLUMNS} FROM packets{clause} ORDER BY {sort} {dir}, id DESC LIMIT ? OFFSET ?"
     );
@@ -633,7 +635,7 @@ pub fn search_packets(conn: &Connection, query: &PacketQuery) -> AppResult<Packe
     Ok(PacketPage {
         total,
         packets,
-        page: query.page,
+        page,
         page_size: page_size as u32,
         duration_ms: started.elapsed().as_millis() as u64,
     })

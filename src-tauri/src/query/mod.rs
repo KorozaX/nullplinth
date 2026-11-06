@@ -112,14 +112,21 @@ pub fn build_where(q: &EventQuery) -> AppResult<(String, Vec<Value>)> {
             AppError::msg(format!("unknown field '{}' for this data source", f.field))
         })?;
         valid_value(kind, &f.op, &f.value)?;
+        // Text comparison is case-insensitive so "root" matches "Root" and "ROOT".
+        // IPv4/IPv6 checks and numeric comparisons stay exact.
+        let cmp = if kind == Kind::Text {
+            format!("{col} COLLATE NOCASE")
+        } else {
+            col.to_string()
+        };
         let cond = match f.op.as_str() {
-            "eq" => Some(format!("{col} = ?")),
-            "neq" => Some(format!("({col} IS NULL OR {col} <> ?)")),
+            "eq" => Some(format!("{cmp} = ?")),
+            "neq" => Some(format!("({col} IS NULL OR {cmp} <> ?)")),
             "contains" => Some(format!("{col} LIKE ? ESCAPE '\\'")),
             "notContains" => Some(format!("({col} IS NULL OR {col} NOT LIKE ? ESCAPE '\\')")),
             "startsWith" => Some(format!("{col} LIKE ? ESCAPE '\\'")),
-            "gt" => Some(format!("{col} > ?")),
-            "lt" => Some(format!("{col} < ?")),
+            "gt" => Some(format!("{cmp} > ?")),
+            "lt" => Some(format!("{cmp} < ?")),
             "exists" => Some(format!("{col} IS NOT NULL AND {col} <> ''")),
             "notExists" => Some(format!("({col} IS NULL OR {col} = '')")),
             "inCidr" => Some(format!("ip_in_cidr({col}, ?) = 1")),
@@ -214,7 +221,9 @@ pub fn query_events(conn: &Connection, q: &EventQuery) -> AppResult<EventPage> {
     let (sort_expr, _) = sort_column(q.sort.as_str());
     let dir = if q.sort_dir.eq_ignore_ascii_case("asc") { "ASC" } else { "DESC" };
     let page_size = q.page_size.clamp(1, 500) as i64;
-    let offset = (q.page as i64) * page_size;
+    // Pages are 1-based: page 1 is the first page. The UI shows 1-based numbers too.
+    let page = q.page.max(1);
+    let offset = (page as i64 - 1) * page_size;
     let sql = format!(
         "SELECT {EVENT_COLUMNS} FROM events{clause} ORDER BY {sort_expr} {dir}, id DESC LIMIT ? OFFSET ?"
     );
@@ -230,7 +239,7 @@ pub fn query_events(conn: &Connection, q: &EventQuery) -> AppResult<EventPage> {
     Ok(EventPage {
         total,
         events,
-        page: q.page,
+        page,
         page_size: page_size as u32,
         duration_ms: started.elapsed().as_millis() as u64,
     })

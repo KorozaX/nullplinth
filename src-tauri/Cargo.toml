@@ -10,6 +10,10 @@ name = "nullplinth_lib"
 # rlib only: the cdylib/staticlib targets exist for Tauri mobile and overflow the
 # MinGW export ordinal limit under the GNU toolchain. Desktop builds do not need them.
 crate-type = ["rlib"]
+# All Rust tests are integration tests under tests/. The lib unit-test harness is not
+# used: cargo does not apply our Common-Controls manifest link args to it on the GNU
+# toolchain, so it cannot load there. See docs/KNOWN_LIMITATIONS.md.
+test = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

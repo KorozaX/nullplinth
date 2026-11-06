@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS packets (
   payload_len INTEGER NOT NULL DEFAULT 0,
   summary TEXT,
   layers TEXT NOT NULL DEFAULT '[]',
-  raw_hex TEXT NOT NULL DEFAULT ''
+  raw_hex TEXT NOT NULL DEFAULT '',
+  frame_kind TEXT,
+  encrypted INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_packets_capture ON packets(capture_id);

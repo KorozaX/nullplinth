@@ -225,16 +225,23 @@ pub fn generate() -> Vec<NormalizedEvent> {
     events
 }
 
-pub fn load(app: &tauri::AppHandle, conn: &Connection) -> AppResult<i64> {
-    if let Some(id) = conn
+pub fn load(app: &tauri::AppHandle, conn: &Connection) -> AppResult<crate::types::ImportResult> {
+    let started = crate::db::now_ms();
+    if let Some((id, count)) = conn
         .query_row(
-            "SELECT id FROM datasets WHERE file_hash = ?1 LIMIT 1",
+            "SELECT id, record_count FROM datasets WHERE file_hash = ?1 LIMIT 1",
             [DEMO_HASH],
-            |r| r.get::<_, i64>(0),
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
         )
         .optional()?
     {
-        return Ok(id);
+        return Ok(crate::types::ImportResult {
+            dataset_id: id,
+            imported: count,
+            skipped: 0,
+            warnings: vec![],
+            duration_ms: 0,
+        });
     }
     let events = generate();
     let tx = conn.unchecked_transaction()?;
@@ -267,5 +274,11 @@ pub fn load(app: &tauri::AppHandle, conn: &Connection) -> AppResult<i64> {
             "message": "Demo dataset loaded",
         }),
     );
-    Ok(dataset_id)
+    Ok(crate::types::ImportResult {
+        dataset_id,
+        imported: count as i64,
+        skipped: 0,
+        warnings: vec![],
+        duration_ms: (crate::db::now_ms() - started) as u64,
+    })
 }

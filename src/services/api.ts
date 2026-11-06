@@ -15,6 +15,7 @@ import type {
   ExportRequest,
   FlowRow,
   ImportOptions,
+  ImportPreview,
   ImportResult,
   Investigation,
   InvestigationDetail,
@@ -24,6 +25,9 @@ import type {
   PacketPage,
   PacketQuery,
   PacketRow,
+  AppPreferences,
+  WorkspaceClearResult,
+  WorkspaceState,
 } from "../types/contracts";
 
 export const api = {
@@ -31,9 +35,10 @@ export const api = {
 
   listDatasets: () => invoke<Dataset[]>("list_datasets"),
   deleteDataset: (datasetId: number) => invoke<void>("delete_dataset", { datasetId }),
-  loadDemoData: () => invoke<number>("load_demo_data"),
+  loadDemoData: () => invoke<ImportResult>("load_demo_data"),
 
   previewCsv: (path: string) => invoke<CsvPreview>("preview_csv", { path }),
+  previewImport: (path: string) => invoke<ImportPreview>("preview_import", { path }),
   importFile: (options: ImportOptions) => invoke<ImportResult>("import_file", { options }),
 
   searchEvents: (query: EventQuery) => invoke<EventPage>("search_events", { query }),
@@ -76,6 +81,13 @@ export const api = {
     invoke<InvestigationDetail>("attach_alert_to_investigation", { investigationId, alertId }),
   exportInvestigation: (investigationId: number, path: string) =>
     invoke<string>("export_investigation", { investigationId, path }),
+
+  workspaceState: () => invoke<WorkspaceState>("workspace_state"),
+  clearWorkspace: (backupPath?: string | null) =>
+    invoke<WorkspaceClearResult>("clear_workspace", { backupPath: backupPath ?? null }),
+  getPreferences: () => invoke<AppPreferences>("get_preferences"),
+  savePreferences: (preferences: AppPreferences) =>
+    invoke<AppPreferences>("save_preferences", { preferences }),
 
   getSettings: () => invoke<DetectionSettings>("get_settings"),
   saveSettings: (settings: DetectionSettings) => invoke<DetectionSettings>("save_settings", { settings }),

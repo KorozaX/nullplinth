@@ -75,6 +75,26 @@ pub struct CsvPreview {
     pub rows: Vec<Vec<String>>,
     pub detected_delimiter: String,
     pub has_header: bool,
+    /// Normalized field name -> column name, guessed from common header aliases.
+    #[serde(default)]
+    pub suggested_mapping: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub estimated_rows: Option<i64>,
+}
+
+/// What a file looks like before it is imported, shown in the import wizard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    /// Registry key: suricata, zeek, json, ndjson, csv, linux_auth, syslog, web_access,
+    /// firewall, generic_text.
+    pub format: String,
+    pub format_label: String,
+    /// high | medium | low - how sure the detector is about the format.
+    pub confidence: String,
+    pub sample_lines: Vec<String>,
+    pub estimated_records: Option<i64>,
+    pub warnings: Vec<String>,
 }
 
 // ------------------------------------------------------------------ events
@@ -324,6 +344,12 @@ pub struct PacketRow {
     pub tcp_flags: Option<String>,
     pub payload_len: i64,
     pub summary: Option<String>,
+    /// 802.11 frame class: management | control | data.
+    #[serde(default)]
+    pub frame_kind: Option<String>,
+    /// True when the wireless frame is protected/encrypted (payload not decodable).
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -532,4 +558,47 @@ pub struct ExportRequest {
     /// csv | json
     pub format: String,
     pub query: EventQuery,
+}
+
+// --------------------------------------------------------------- workspace
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceState {
+    pub has_data: bool,
+    pub datasets: i64,
+    pub events: i64,
+    pub captures: i64,
+    pub packets: i64,
+    pub flows: i64,
+    pub alerts: i64,
+    pub investigations: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceClearResult {
+    pub datasets: i64,
+    pub events: i64,
+    pub captures: i64,
+    pub packets: i64,
+    pub flows: i64,
+    pub alerts: i64,
+    pub investigations: i64,
+    pub backup_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppPreferences {
+    /// "ask" (default) or "resume".
+    pub startup_behavior: String,
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            startup_behavior: "ask".to_string(),
+        }
+    }
 }

@@ -6,7 +6,7 @@ use crate::types::{Dataset, NormalizedEvent};
 use rusqlite::{params, Connection};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
 #[derive(Clone)]
@@ -65,13 +65,38 @@ fn register_functions(conn: &Connection) -> AppResult<()> {
 
 fn init_schema(conn: &Connection) -> AppResult<()> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version != 0 && version != SCHEMA_VERSION {
+    if version > SCHEMA_VERSION {
         return Err(AppError::msg(format!(
-            "unsupported database schema version {version} (expected {SCHEMA_VERSION})"
+            "database schema version {version} is newer than this build supports ({SCHEMA_VERSION})"
         )));
+    }
+    if version == 1 {
+        // v1 databases are upgraded in place: user data must survive the update.
+        migrate_v1_to_v2(conn)?;
     }
     conn.execute_batch(SCHEMA_SQL)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
+/// v2 adds wireless frame metadata to packets. Existing rows stay valid.
+fn migrate_v1_to_v2(conn: &Connection) -> AppResult<()> {
+    let has_column = |name: &str| -> AppResult<bool> {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('packets') WHERE name = ?1",
+            params![name],
+            |r| r.get(0),
+        )?;
+        Ok(count > 0)
+    };
+    if !has_column("frame_kind")? {
+        conn.execute_batch("ALTER TABLE packets ADD COLUMN frame_kind TEXT")?;
+    }
+    if !has_column("encrypted")? {
+        conn.execute_batch(
+            "ALTER TABLE packets ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0",
+        )?;
+    }
     Ok(())
 }
 
@@ -165,16 +190,24 @@ pub fn get_dataset_name(conn: &Connection, id: i64) -> AppResult<Option<String>>
 
 pub fn delete_dataset(conn: &Connection, dataset_id: i64) -> AppResult<()> {
     let tx = conn.unchecked_transaction()?;
-    // Alerts are derived findings: drop those whose evidence no longer exists.
-    tx.execute(
-        "DELETE FROM alert_evidence WHERE kind = 'event' AND ref_id NOT IN (SELECT id FROM events)
-           AND ref_id NOT IN (SELECT id FROM events WHERE dataset_id = ?1)",
-        params![dataset_id],
-    )?;
     tx.execute("DELETE FROM events WHERE dataset_id = ?1", params![dataset_id])?;
     tx.execute("DELETE FROM datasets WHERE id = ?1", params![dataset_id])?;
+    // Alerts are derived findings: drop evidence pointing at deleted events first, then any
+    // alert left without evidence, then any investigation link that would dangle.
+    tx.execute(
+        "DELETE FROM alert_evidence WHERE kind = 'event' AND ref_id NOT IN (SELECT id FROM events)",
+        [],
+    )?;
     tx.execute(
         "DELETE FROM alerts WHERE id NOT IN (SELECT DISTINCT alert_id FROM alert_evidence)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM alert_evidence WHERE alert_id NOT IN (SELECT id FROM alerts)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM investigation_alerts WHERE alert_id NOT IN (SELECT id FROM alerts)",
         [],
     )?;
     tx.commit()?;

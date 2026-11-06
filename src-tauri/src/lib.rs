@@ -10,6 +10,7 @@ pub mod pcap;
 pub mod query;
 pub mod state;
 pub mod types;
+pub mod workspace;
 
 use tauri::Manager;
 
@@ -31,9 +32,14 @@ pub fn run() {
             commands::delete_dataset,
             commands::get_overview,
             commands::load_demo_data,
+            commands::workspace_state,
+            commands::clear_workspace,
+            commands::get_preferences,
+            commands::save_preferences,
             commands::get_settings,
             commands::save_settings,
             commands::preview_csv,
+            commands::preview_import,
             commands::import_file,
             commands::search_events,
             commands::get_event,

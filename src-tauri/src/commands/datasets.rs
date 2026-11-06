@@ -1,7 +1,7 @@
 use crate::db;
 use crate::error::{blocking, AppResult};
 use crate::state::AppState;
-use crate::types::{Dataset, DetectionSettings, Overview};
+use crate::types::{Dataset, DetectionSettings, ImportResult, Overview};
 
 #[tauri::command]
 pub async fn list_datasets(state: tauri::State<'_, AppState>) -> AppResult<Vec<Dataset>> {
@@ -64,7 +64,7 @@ pub async fn save_settings(
 pub async fn load_demo_data(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> AppResult<i64> {
+) -> AppResult<ImportResult> {
     let db = state.db.clone();
     blocking(move || {
         let conn = db.conn()?;

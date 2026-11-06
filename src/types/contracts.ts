@@ -54,6 +54,19 @@ export interface CsvPreview {
   rows: string[][];
   detectedDelimiter: string;
   hasHeader: boolean;
+  /** Normalized field name -> column name guessed from common header aliases. */
+  suggestedMapping: Record<string, string>;
+  estimatedRows: number | null;
+}
+
+/** Detected format, confidence and samples shown before importing a file. */
+export interface ImportPreview {
+  format: string;
+  formatLabel: string;
+  confidence: "high" | "medium" | "low" | string;
+  sampleLines: string[];
+  estimatedRecords: number | null;
+  warnings: string[];
 }
 
 export interface NormalizedEvent {
@@ -206,6 +219,10 @@ export interface PacketRow {
   tcpFlags: string | null;
   payloadLen: number;
   summary: string | null;
+  /** 802.11 frame class: management | control | data. */
+  frameKind: string | null;
+  /** Wireless frame is protected/encrypted: payload is not decodable. */
+  encrypted: boolean;
 }
 
 export interface ProtoField {
@@ -348,4 +365,30 @@ export interface ExportRequest {
   path: string;
   format: "csv" | "json";
   query: EventQuery;
+}
+export interface WorkspaceState {
+  hasData: boolean;
+  datasets: number;
+  events: number;
+  captures: number;
+  packets: number;
+  flows: number;
+  alerts: number;
+  investigations: number;
+}
+
+export interface WorkspaceClearResult {
+  datasets: number;
+  events: number;
+  captures: number;
+  packets: number;
+  flows: number;
+  alerts: number;
+  investigations: number;
+  backupPath: string | null;
+}
+
+export interface AppPreferences {
+  /** "ask" (default) or "resume". */
+  startupBehavior: "ask" | "resume" | string;
 }

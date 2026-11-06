@@ -6,6 +6,7 @@ mod ingest;
 mod investigation;
 mod pcap;
 mod query;
+mod workspace;
 
 pub use datasets::*;
 pub use detection::*;
@@ -13,3 +14,4 @@ pub use ingest::*;
 pub use investigation::*;
 pub use pcap::*;
 pub use query::*;
+pub use workspace::*;

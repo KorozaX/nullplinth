@@ -47,6 +47,8 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
-# scratch
+# QA screenshots captured from the desktop build
+shots/
+shots*/
 probe-tauri/
 scripts/out/

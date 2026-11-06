@@ -54,18 +54,32 @@ been executed on the development machine.
 | Deep pagination (page 500, 100 rows) | 19 ms |
 | Database size for 100k events | 38.7 MB |
 
-### Pending
+### Release and distribution (verified)
 
-- Release build and NSIS installer verification (running).
-- Final documentation pass and GitHub push.
+| Item | Value |
+|------|-------|
+| Release build | `npm run tauri build` -> finished, 3m53s |
+| Application binary | `src-tauri/target/release/nullplinth.exe`, 4.98 MiB, version 0.1.0 |
+| Installer | `src-tauri/target/release/bundle/nsis/NULLPLINTH_0.1.0_x64-setup.exe`, 1.95 MiB |
+| Installer signature | not code signed (expected for this project) |
+| Launch test | release binary starts, window title "NULLPLINTH", 35.7 MB working set |
+| Local database on first launch | `%APPDATA%\com.nullplinth.app\nullplinth.db`, schema v1, FTS5 present, 12 tables |
+
+### Remaining gaps
+
+- No import cancellation (documented in docs/KNOWN_LIMITATIONS.md).
+- No drag-and-drop import.
+- Desktop UI verified by automated component tests plus a manual launch smoke test; no
+  scripted GUI automation is available on this machine.
 
 ## Build status
 
 | Check | Command | Result |
 |-------|---------|--------|
-| Backend compiles | `cargo check --all-targets` | clean |
-| Frontend typechecks | `npx tsc --noEmit` | clean |
-| Release build | `npm run tauri build` | running |
+| Backend compiles | `cargo check --all-targets` | exit 0, no warnings |
+| Frontend typechecks | `npx tsc --noEmit` | exit 0 |
+| Frontend build | `npm run build` | exit 0, 243 kB JS / 25 kB CSS |
+| Release build + NSIS | `npm run tauri build` | exit 0, installer produced |
 
 ## Known issues
 

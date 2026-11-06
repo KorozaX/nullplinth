@@ -187,7 +187,7 @@
 .btn:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line-strong); color: var(--fg); }
 .btn:active:not(:disabled) { background: var(--surface-active); }
 .btn--primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
-.btn--primary:hover:not(:disabled) { background: #f4f2ec; border-color: #f4f2ec; color: var(--bg); }
+.btn--primary:hover:not(:disabled) { background: var(--fg-bright); border-color: var(--fg-bright); color: var(--bg); }
 .btn--danger { background: transparent; border-color: var(--signal-line); color: var(--signal-bright); }
 .btn--danger:hover:not(:disabled) { background: var(--signal-wash); border-color: var(--signal); color: var(--signal-bright); }
 .btn--ghost { background: transparent; border-color: transparent; color: var(--fg-muted); }
@@ -370,11 +370,11 @@
   white-space: nowrap;
 }
 .badge--critical { border-color: var(--signal-line); background: var(--signal-wash); color: var(--signal-bright); }
-.badge--high { border-color: #4a4a4d; color: var(--sev-high); }
+.badge--high { border-color: var(--line-strong); color: var(--sev-high); }
 .badge--medium { border-color: var(--line-strong); color: var(--sev-medium); }
 .badge--low, .badge--info { border-color: var(--line); color: var(--sev-low); }
 .badge--neutral { border-color: var(--line); color: var(--fg-dim); }
-.badge--ok { border-color: #3d4a3b; color: var(--ok); }
+.badge--ok { border-color: var(--ok-line); color: var(--ok); }
 .badge--signal { border-color: var(--signal-line); background: var(--signal-wash); color: var(--signal-bright); }
 
 /* ---------- Feedback ---------- */

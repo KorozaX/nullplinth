@@ -4,17 +4,16 @@ import { Database, FileSpreadsheet, FileText, Trash2, Upload } from "lucide-reac
 import { api } from "../services/api";
 import type { Capture, Dataset } from "../types/contracts";
 import { useMode } from "../context/ModeContext";
+import { useWorkspace } from "../context/WorkspaceContext";
+import { useImport } from "../components/ImportWorkflow";
 import { errorMessage, useLoad } from "../lib/async";
-import { pickFile } from "../lib/dialog";
 import { fileName, formatBytes, formatNumber, formatTimestamp, shortHash } from "../lib/format";
 import { Button, IconButton } from "../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
-import { Badge } from "../components/ui/Badge";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { DataTable } from "../components/ui/Table";
 import type { Column } from "../components/ui/Table";
-import { CsvWizard } from "../components/CsvWizard";
 
 type PendingDelete =
   | { kind: "dataset"; id: number; name: string }
@@ -23,55 +22,15 @@ type PendingDelete =
 
 export function DataSourcesScreen() {
   const { mode, isAnalyst } = useMode();
-  const datasets = useLoad(() => api.listDatasets(), []);
-  const captures = useLoad(() => api.listCaptures(), []);
+  const { version, refresh } = useWorkspace();
+  const { beginImport } = useImport();
+  const datasets = useLoad(() => api.listDatasets(), [version]);
+  const captures = useLoad(() => api.listCaptures(), [version]);
 
-  const [busy, setBusy] = useState<"log" | "pcap" | null>(null);
   const [pending, setPending] = useState<PendingDelete>(null);
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [wizardOpen, setWizardOpen] = useState(false);
-
-  async function importLog() {
-    const path = await pickFile("Import log file", [
-      { name: "Log files", extensions: ["json", "jsonl", "ndjson", "log", "tsv", "csv"] },
-    ]);
-    if (!path) return;
-    setBusy("log");
-    setNotice(null);
-    setActionError(null);
-    try {
-      const result = await api.importFile({ path });
-      setNotice(
-        "Imported " + formatNumber(result.imported) + " events, skipped " + formatNumber(result.skipped) + ".",
-      );
-      datasets.reload();
-    } catch (cause) {
-      setActionError(errorMessage(cause));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function importPcap() {
-    const path = await pickFile("Import packet capture", [
-      { name: "Packet captures", extensions: ["pcap", "pcapng", "cap"] },
-    ]);
-    if (!path) return;
-    setBusy("pcap");
-    setNotice(null);
-    setActionError(null);
-    try {
-      const capture = await api.importPcap(path);
-      setNotice("Imported " + formatNumber(capture.packetCount) + " packets from " + capture.name + ".");
-      captures.reload();
-    } catch (cause) {
-      setActionError(errorMessage(cause));
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function confirmDelete() {
     if (!pending) return;
@@ -82,13 +41,12 @@ export function DataSourcesScreen() {
       if (pending.kind === "dataset") {
         await api.deleteDataset(pending.id);
         setNotice("Deleted dataset " + pending.name + ".");
-        datasets.reload();
       } else {
         await api.deleteCapture(pending.id);
         setNotice("Deleted capture " + pending.name + ".");
-        captures.reload();
       }
       setPending(null);
+      refresh();
     } catch (cause) {
       setActionError(errorMessage(cause));
     } finally {
@@ -98,21 +56,19 @@ export function DataSourcesScreen() {
 
   const datasetColumns: ReadonlyArray<Column<Dataset>> = [
     { key: "name", header: "Dataset", render: (dataset: Dataset) => dataset.name },
-    { key: "sourceType", header: "Type", render: (dataset: Dataset) => <Badge>{dataset.sourceType.toUpperCase()}</Badge> },
+    {
+      key: "sourceType",
+      header: "Type",
+      render: (dataset: Dataset) => <span className="chip chip--other">{dataset.sourceType}</span>,
+    },
     {
       key: "file",
       header: "File",
       render: (dataset: Dataset) => (
         <span className="mono" title={dataset.fileName ?? undefined}>
-          {fileName(dataset.fileName)} {isAnalyst ? formatBytes(dataset.fileSize) : ""}
+          {fileName(dataset.fileName)}
         </span>
       ),
-    },
-    {
-      key: "importedAt",
-      header: "Imported",
-      mono: true,
-      render: (dataset: Dataset) => formatTimestamp(dataset.importedAt, mode),
     },
     {
       key: "recordCount",
@@ -126,7 +82,12 @@ export function DataSourcesScreen() {
       header: "Skipped",
       mono: true,
       align: "right",
-      render: (dataset: Dataset) => formatNumber(dataset.skippedCount),
+      render: (dataset: Dataset) =>
+        dataset.skippedCount > 0 ? (
+          <span style={{ color: "var(--sev-medium)" }}>{formatNumber(dataset.skippedCount)}</span>
+        ) : (
+          <span className="dim">0</span>
+        ),
     },
     {
       key: "warnings",
@@ -137,9 +98,22 @@ export function DataSourcesScreen() {
           <span className="dim">0</span>
         ) : (
           <span title={dataset.warnings.join("\n")}>
-            <Badge tone="critical">{formatNumber(dataset.warnings.length)}</Badge>
+            <span className="chip chip--medium">{formatNumber(dataset.warnings.length)}</span>
           </span>
         ),
+    },
+    {
+      key: "fileSize",
+      header: "Size",
+      mono: true,
+      align: "right",
+      render: (dataset: Dataset) => formatBytes(dataset.fileSize),
+    },
+    {
+      key: "importedAt",
+      header: "Imported",
+      mono: true,
+      render: (dataset: Dataset) => formatTimestamp(dataset.importedAt, mode),
     },
     ...(isAnalyst
       ? ([
@@ -169,7 +143,11 @@ export function DataSourcesScreen() {
   const captureColumns: ReadonlyArray<Column<Capture>> = [
     { key: "name", header: "Capture", render: (capture: Capture) => capture.name },
     { key: "file", header: "File", mono: true, render: (capture: Capture) => fileName(capture.fileName) },
-    { key: "linkType", header: "Link type", render: (capture: Capture) => capture.linkType ?? "\u2014" },
+    {
+      key: "linkType",
+      header: "Link type",
+      render: (capture: Capture) => <span className="chip chip--eth">{capture.linkType ?? "unknown"}</span>,
+    },
     {
       key: "packetCount",
       header: "Packets",
@@ -212,17 +190,15 @@ export function DataSourcesScreen() {
     <div className="page">
       <div className="page__bar">
         <p className="page__lede">
-          Every imported file is hashed on import and stored in a local SQLite database. Source files are never modified.
+          Every imported file is hashed on import and stored in a local SQLite database. Drag files anywhere onto the
+          window, or use one button for every supported format. Source files are never modified.
         </p>
         <div className="toolbar">
-          <Button icon={Upload} variant="primary" onClick={importLog} disabled={busy !== null}>
-            {busy === "log" ? "Importing" : "Import log file"}
+          <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
+            Import data
           </Button>
-          <Button icon={FileSpreadsheet} onClick={() => setWizardOpen(true)} disabled={busy !== null}>
-            CSV wizard
-          </Button>
-          <Button icon={Upload} onClick={importPcap} disabled={busy !== null}>
-            {busy === "pcap" ? "Importing" : "Import PCAP"}
+          <Button icon={FileSpreadsheet} onClick={() => void beginImport()}>
+            Import CSV
           </Button>
         </div>
       </div>
@@ -241,8 +217,8 @@ export function DataSourcesScreen() {
             title="No datasets imported"
             description="Import a JSON, NDJSON, Suricata EVE, Zeek TSV or CSV log file to create a dataset."
             action={
-              <Button icon={Upload} variant="primary" onClick={importLog} disabled={busy !== null}>
-                Import log file
+              <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
+                Import data
               </Button>
             }
           />
@@ -262,8 +238,8 @@ export function DataSourcesScreen() {
             title="No captures imported"
             description="Import a .pcap or .pcapng file to decode packets and group conversations."
             action={
-              <Button icon={Upload} variant="primary" onClick={importPcap} disabled={busy !== null}>
-                Import PCAP
+              <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
+                Import data
               </Button>
             }
           />
@@ -271,16 +247,6 @@ export function DataSourcesScreen() {
           <DataTable label="Packet captures" columns={captureColumns} rows={captureList} rowKey={(capture: Capture) => capture.id} dense />
         )}
       </Panel>
-
-      <CsvWizard
-        open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-        onImported={(result) => {
-          setWizardOpen(false);
-          setNotice("Imported " + formatNumber(result.imported) + " events from a CSV file.");
-          datasets.reload();
-        }}
-      />
 
       <ConfirmDialog
         open={pending !== null}

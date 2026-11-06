@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ArrowRight, FileSpreadsheet, Upload, X } from "lucide-react";
@@ -14,12 +14,13 @@ import {
   CSV_FIELDS,
   delimiterLabel,
   derivedPreview,
-  initialDraft,
   mappedCount,
   TIMESTAMP_FORMATS,
   validateDraft,
 } from "../lib/csvMapping";
 import type { CsvWizardDraft } from "../lib/csvMapping";
+import { inspectSamples, suggestedDraft } from "../lib/csvValidation";
+import { importSuccessMessage } from "../lib/importResults";
 import { Button, IconButton } from "./ui/Button";
 import { Field, Select, TextInput } from "./ui/Field";
 import { LoadingState, Notice } from "./ui/Feedback";
@@ -38,9 +39,11 @@ export interface CsvWizardProps {
   open: boolean;
   onClose: () => void;
   onImported: (result: ImportResult) => void;
+  /** When set, the wizard opens straight into the preview for this file. */
+  initialPath?: string | null;
 }
 
-export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
+export function CsvWizard({ open, onClose, onImported, initialPath = null }: CsvWizardProps) {
   const { isAnalyst } = useMode();
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
@@ -50,10 +53,31 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [draft, setDraft] = useState<CsvWizardDraft | null>(null);
+  const [suggestedCount, setSuggestedCount] = useState(0);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
+
+  const loadPreview = useCallback(async (selected: string) => {
+    setPath(selected);
+    setPreview(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    try {
+      const loaded = await api.previewCsv(selected);
+      setPreview(loaded);
+      const nextDraft = suggestedDraft(loaded);
+      setDraft(nextDraft);
+      setSuggestedCount(Object.keys(loaded.suggestedMapping ?? {}).length);
+      setStep("preview");
+    } catch (cause) {
+      setPreviewError(errorMessage(cause));
+      setStep("file");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -62,12 +86,18 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
     setPreview(null);
     setPreviewError(null);
     setDraft(null);
+    setSuggestedCount(0);
     setImporting(false);
     setImportError(null);
     setProgress(null);
     setResult(null);
     dialogRef.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !initialPath) return;
+    void loadPreview(initialPath);
+  }, [open, initialPath, loadPreview]);
 
   useEffect(() => {
     if (!open) return;
@@ -103,6 +133,17 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
   const columns = preview && draft ? derivedPreview(preview, draft.hasHeader) : null;
   const effectiveColumns = columns ? columns.columns : [];
   const problem = draft && preview ? validateDraft(draft, effectiveColumns) : null;
+  const inspection = preview && draft ? inspectSamples(preview, draft) : null;
+  const allTimestampsBad =
+    draft !== null &&
+    draft.timestampColumn.length > 0 &&
+    inspection !== null &&
+    inspection.sampledRows > 0 &&
+    inspection.unparsableTimestamps === inspection.sampledRows;
+  const sampleBlocking = allTimestampsBad
+    ? "Every sample row has an unparsable timestamp. Choose another column or timestamp format."
+    : null;
+  const importBlocked = problem !== null || sampleBlocking !== null;
 
   function patchDraft(patch: Partial<CsvWizardDraft>) {
     setDraft((current) => (current ? { ...current, ...patch } : current));
@@ -117,26 +158,12 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
   async function chooseFile() {
     const selected = await pickFile("Choose a CSV file", [{ name: "CSV files", extensions: ["csv", "tsv"] }]);
     if (!selected) return;
-    setPath(selected);
-    setPreview(null);
-    setPreviewError(null);
-    setPreviewLoading(true);
-    try {
-      const loaded = await api.previewCsv(selected);
-      setPreview(loaded);
-      setDraft(initialDraft(loaded));
-      setStep("preview");
-    } catch (cause) {
-      setPreviewError(errorMessage(cause));
-    } finally {
-      setPreviewLoading(false);
-    }
+    await loadPreview(selected);
   }
 
   async function startImport() {
     if (!path || !preview || !draft) return;
-    const blocking = validateDraft(draft, effectiveColumns);
-    if (blocking) return;
+    if (validateDraft(draft, effectiveColumns) !== null || sampleBlocking !== null) return;
     setImportError(null);
     setProgress(null);
     setResult(null);
@@ -244,8 +271,12 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
         </p>
         <div className="wizard__meta">
           <span className="wizard__file">{path ? fileName(path) : ""}</span>
-          <span className="badge badge--neutral mono">delimiter: {delimiterLabel(preview.detectedDelimiter)}</span>
-          <span className="badge badge--neutral mono">{formatNumber(columns.rows.length)} preview rows</span>
+          <span className="chip chip--other">delimiter: {delimiterLabel(preview.detectedDelimiter)}</span>
+          <span className="chip chip--other">{formatNumber(columns.columns.length)} columns</span>
+          <span className="chip chip--other">{formatNumber(columns.rows.length)} sample rows</span>
+          {preview.estimatedRows !== null && preview.estimatedRows !== undefined ? (
+            <span className="chip chip--status-new">~{formatNumber(preview.estimatedRows)} total rows</span>
+          ) : null}
           <label className="checkbox">
             <input
               type="checkbox"
@@ -264,7 +295,8 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
                 columns: preview.columns,
                 detectedDelimiter: preview.detectedDelimiter,
                 hasHeader: preview.hasHeader,
-                rowCount: preview.rows.length,
+                suggestedMapping: preview.suggestedMapping,
+                estimatedRows: preview.estimatedRows,
               })}
             </pre>
           </details>
@@ -291,8 +323,25 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
           Tell the importer which column holds the timestamp and which columns hold each field. Only the timestamp and one
           other field are required; unmapped values are kept in the event's unmapped attributes.
         </p>
+        {suggestedCount > 0 ? (
+          <Notice tone="info">
+            {formatNumber(suggestedCount)} column mappings were suggested from the header names. Adjust anything that looks
+            wrong before importing.
+          </Notice>
+        ) : null}
         {importError ? <Notice tone="error">{importError}</Notice> : null}
         {problem ? <Notice tone="error">{problem}</Notice> : null}
+        {sampleBlocking ? <Notice tone="error">{sampleBlocking}</Notice> : null}
+        {inspection && inspection.warnings.length > 0 ? (
+          <div>
+            <h3 className="subhead">Validation warnings</h3>
+            <ul className="warning-list">
+              {inspection.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="wizard__mapping">
           <Field label="Timestamp column">
             <Select
@@ -371,7 +420,7 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
           <Button icon={ArrowLeft} variant="ghost" onClick={() => setStep("preview")} disabled={importing}>
             Back
           </Button>
-          <Button icon={Upload} variant="primary" onClick={startImport} disabled={problem !== null || importing}>
+          <Button icon={Upload} variant="primary" onClick={startImport} disabled={importBlocked || importing}>
             Import CSV
           </Button>
         </div>
@@ -384,9 +433,7 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
         : null;
     body = (
       <div className="wizard__progress">
-        <p className="wizard__help">
-          {progress ? progress.message ?? progress.phase : "Starting the import."}
-        </p>
+        <p className="wizard__help">{progress ? progress.message ?? progress.phase : "Starting the import."}</p>
         <div
           className="progress__track"
           role="progressbar"
@@ -419,10 +466,8 @@ export function CsvWizard({ open, onClose, onImported }: CsvWizardProps) {
   } else if (step === "done" && result) {
     body = (
       <>
-        <div className="wizard__ok">
-          Imported {formatNumber(result.imported)} events, skipped {formatNumber(result.skipped)} in{" "}
-          {formatDuration(result.durationMs)}.
-        </div>
+        <div className="wizard__ok">{importSuccessMessage(result.imported, result.skipped)}</div>
+        <p className="wizard__help">Finished in {formatDuration(result.durationMs)}.</p>
         {result.warnings.length > 0 ? (
           <>
             <h3 className="subhead">Warnings ({formatNumber(result.warnings.length)})</h3>

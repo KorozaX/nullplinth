@@ -52,6 +52,27 @@ describe("EventExplorerScreen", () => {
     expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
   });
 
+  it("uses unambiguous column headers with one source type and one source IP", async () => {
+    vi.mocked(api.searchEvents).mockResolvedValue({
+      total: 1,
+      events: [eventRow(1)],
+      page: 1,
+      pageSize: 50,
+      durationMs: 1,
+    });
+
+    renderWithMode(<EventExplorerScreen />);
+    await screen.findByText("203.0.113.44:51234");
+
+    expect(screen.getByRole("columnheader", { name: "Source type" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Source IP" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Destination IP" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Event type" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "App protocol" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Source" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader", { name: "Source IP" })).toHaveLength(1);
+  });
+
   it("opens the event detail drawer with the raw record for analysts", async () => {
     const user = userEvent.setup();
     vi.mocked(api.searchEvents).mockResolvedValue({

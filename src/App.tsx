@@ -2,6 +2,9 @@ import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
 
 import { ModeProvider } from "./context/ModeContext";
+import { WorkspaceProvider } from "./context/WorkspaceContext";
+import { ImportProvider } from "./components/ImportWorkflow";
+import { WorkspaceGate } from "./components/WorkspaceWelcome";
 import { AppShell } from "./shell/AppShell";
 import type { SectionId } from "./shell/sections";
 import { OverviewScreen } from "./screens/OverviewScreen";
@@ -47,10 +50,16 @@ export function App() {
   }, []);
 
   return (
-    <ModeProvider>
-      <AppShell section={section} onSelect={setSection}>
-        {renderSection(section, setSection, openInvestigation, investigationFocus)}
-      </AppShell>
-    </ModeProvider>
+    <WorkspaceProvider>
+      <ModeProvider>
+        <ImportProvider>
+          <WorkspaceGate>
+            <AppShell section={section} onSelect={setSection}>
+              {renderSection(section, setSection, openInvestigation, investigationFocus)}
+            </AppShell>
+          </WorkspaceGate>
+        </ImportProvider>
+      </ModeProvider>
+    </WorkspaceProvider>
   );
 }

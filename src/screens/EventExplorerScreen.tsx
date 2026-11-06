@@ -4,6 +4,7 @@ import { Download, Inbox, RefreshCw, Search, SlidersHorizontal } from "lucide-re
 import { api } from "../services/api";
 import type { EventDetail, EventQuery, EventRow, FilterRow } from "../types/contracts";
 import { useMode } from "../context/ModeContext";
+import { useWorkspace } from "../context/WorkspaceContext";
 import { errorMessage, useLoad } from "../lib/async";
 import { pickSavePath } from "../lib/dialog";
 import { formatDuration, formatEndpoint, formatNumber, formatTimestamp, formatValue } from "../lib/format";
@@ -14,7 +15,7 @@ import { Button } from "../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
 import { Field, Select, TextInput } from "../components/ui/Field";
-import { SeverityBadge } from "../components/ui/Badge";
+import { ProtocolChip, SeverityBadge } from "../components/ui/Badge";
 import { DataTable, Pagination } from "../components/ui/Table";
 import type { Column, SortState } from "../components/ui/Table";
 import { Drawer } from "../components/ui/Drawer";
@@ -25,7 +26,8 @@ const PAGE_SIZES = [25, 50, 100, 250] as const;
 
 export function EventExplorerScreen() {
   const { mode, isAnalyst } = useMode();
-  const datasets = useLoad(() => api.listDatasets(), []);
+  const { version } = useWorkspace();
+  const datasets = useLoad(() => api.listDatasets(), [version]);
 
   const [filters, setFilters] = useState<FilterRow[]>([]);
   const [datasetFilter, setDatasetFilter] = useState<number | "all">("all");
@@ -76,7 +78,7 @@ export function EventExplorerScreen() {
     [datasetFilter, range, appliedFilters, text, sort, sortDir, page, pageSize],
   );
 
-  const results = useLoad(() => api.searchEvents(query), [JSON.stringify(query)]);
+  const results = useLoad(() => api.searchEvents(query), [JSON.stringify(query), version]);
 
   function changeFilters(next: FilterRow[]) {
     setFilters(next);
@@ -174,22 +176,27 @@ export function EventExplorerScreen() {
           render: (event: EventRow) => <SeverityBadge severity={event.severity} />,
           width: "86px",
         },
-        { key: "sourceType", header: "Source", render: (event: EventRow) => formatValue(event.sourceType) },
-        { key: "category", header: "Category", render: (event: EventRow) => formatValue(event.category) },
-        { key: "eventType", header: "Type", render: (event: EventRow) => formatValue(event.eventType) },
+        { key: "sourceType", header: "Source type", render: (event: EventRow) => formatValue(event.sourceType) },
+        { key: "category", header: "Event category", render: (event: EventRow) => formatValue(event.category) },
+        { key: "eventType", header: "Event type", render: (event: EventRow) => formatValue(event.eventType) },
         {
           key: "srcIp",
-          header: "Source",
+          header: "Source IP",
           mono: true,
           render: (event: EventRow) => formatEndpoint(event.srcIp, event.srcPort),
         },
         {
           key: "dstIp",
-          header: "Destination",
+          header: "Destination IP",
           mono: true,
           render: (event: EventRow) => formatEndpoint(event.dstIp, event.dstPort),
         },
-        { key: "transport", header: "Transport", render: (event: EventRow) => formatValue(event.transport) },
+        {
+          key: "transport",
+          header: "Transport",
+          render: (event: EventRow) => <ProtocolChip protocol={event.transport} />,
+        },
+        { key: "appProto", header: "App protocol", render: (event: EventRow) => <ProtocolChip protocol={event.appProto} /> },
         { key: "action", header: "Action", render: (event: EventRow) => formatValue(event.action) },
         { key: "username", header: "User", render: (event: EventRow) => formatValue(event.username) },
       ]
@@ -220,7 +227,16 @@ export function EventExplorerScreen() {
           mono: true,
           render: (event: EventRow) => formatEndpoint(event.dstIp, event.dstPort),
         },
-        { key: "message", header: "What happened", render: (event: EventRow) => formatValue(event.message) },
+        {
+          key: "message",
+          header: "What happened",
+          render: (event: EventRow) => (
+            <span className="cell-chips">
+              {event.appProto ? <ProtocolChip protocol={event.appProto} /> : null}
+              <span className="truncate">{formatValue(event.message)}</span>
+            </span>
+          ),
+        },
       ];
 
   const resultData = results.data;

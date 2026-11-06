@@ -12,11 +12,13 @@ import type {
   PacketRow,
 } from "../types/contracts";
 import { useMode } from "../context/ModeContext";
+import { useWorkspace } from "../context/WorkspaceContext";
+import { useImport } from "../components/ImportWorkflow";
 import { errorMessage, useLoad } from "../lib/async";
-import { pickFile } from "../lib/dialog";
 import { formatBytes, formatDuration, formatEndpoint, formatNumber, formatTimestamp } from "../lib/format";
 import { PACKET_FIELDS, validateFilterRow } from "../lib/filterFields";
 import { Button } from "../components/ui/Button";
+import { EncryptedChip, FrameKindChip, ProtocolChip } from "../components/ui/Badge";
 import { EmptyState, ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
 import { Field, Select } from "../components/ui/Field";
@@ -30,7 +32,9 @@ const PAGE_SIZES = [50, 100, 250, 500] as const;
 
 export function NetworkAnalyzerScreen() {
   const { mode, isAnalyst } = useMode();
-  const captures = useLoad(() => api.listCaptures(), []);
+  const { version } = useWorkspace();
+  const { beginImport } = useImport();
+  const captures = useLoad(() => api.listCaptures(), [version]);
 
   const [captureId, setCaptureId] = useState<number | null>(null);
   const [filters, setFilters] = useState<FilterRow[]>([]);
@@ -44,9 +48,6 @@ export function NetworkAnalyzerScreen() {
   const [packetDetail, setPacketDetail] = useState<PacketDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-
-  const [importBusy, setImportBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,7 +60,7 @@ export function NetworkAnalyzerScreen() {
 
   const flows = useLoad(
     () => (captureId === null ? Promise.resolve<FlowRow[]>([]) : api.listFlows(captureId)),
-    [captureId],
+    [captureId, version],
   );
 
   const filterErrors = useMemo(() => filters.map((row) => validateFilterRow(row, PACKET_FIELDS)), [filters]);
@@ -87,7 +88,7 @@ export function NetworkAnalyzerScreen() {
       captureId === null
         ? Promise.resolve<PacketPage>({ total: 0, packets: [], page, pageSize, durationMs: 0 })
         : api.searchPackets(query),
-    [JSON.stringify(query)],
+    [JSON.stringify(query), version],
   );
 
   function changeCapture(value: string) {
@@ -138,31 +139,6 @@ export function NetworkAnalyzerScreen() {
     setFlowPackets(null);
   }
 
-  async function handleImport() {
-    const path = await pickFile("Import packet capture", [
-      { name: "Packet captures", extensions: ["pcap", "pcapng", "cap"] },
-    ]);
-    if (!path) return;
-    setImportBusy(true);
-    setNotice(null);
-    setActionError(null);
-    try {
-      const capture = await api.importPcap(path);
-      setNotice(
-        "Imported " + formatNumber(capture.packetCount) + " packets from " + capture.name + ".",
-      );
-      captures.reload();
-      setCaptureId(capture.id);
-      setPage(1);
-      setActiveFlowId(null);
-      setFlowPackets(null);
-    } catch (cause) {
-      setActionError(errorMessage(cause));
-    } finally {
-      setImportBusy(false);
-    }
-  }
-
   const columns: ReadonlyArray<Column<PacketRow>> = isAnalyst
     ? [
         {
@@ -192,8 +168,16 @@ export function NetworkAnalyzerScreen() {
           mono: true,
           render: (packet: PacketRow) => formatEndpoint(packet.dstIp, packet.dstPort),
         },
-        { key: "protocol", header: "Protocol", render: (packet: PacketRow) => packet.protocol ?? "\u2014" },
-        { key: "transport", header: "Transport", render: (packet: PacketRow) => packet.transport ?? "\u2014" },
+        {
+          key: "protocol",
+          header: "Protocol",
+          render: (packet: PacketRow) => <ProtocolChip protocol={packet.protocol} />,
+        },
+        {
+          key: "frameKind",
+          header: "Frame",
+          render: (packet: PacketRow) => <FrameKindChip frameKind={packet.frameKind} />,
+        },
         { key: "tcpFlags", header: "Flags", mono: true, render: (packet: PacketRow) => packet.tcpFlags ?? "\u2014" },
         {
           key: "caplen",
@@ -202,7 +186,16 @@ export function NetworkAnalyzerScreen() {
           align: "right",
           render: (packet: PacketRow) => String(packet.caplen),
         },
-        { key: "summary", header: "Info", render: (packet: PacketRow) => packet.summary ?? "\u2014" },
+        {
+          key: "summary",
+          header: "Info",
+          render: (packet: PacketRow) => (
+            <span className="cell-chips">
+              {packet.encrypted ? <EncryptedChip encrypted /> : null}
+              {packet.summary ?? "\u2014"}
+            </span>
+          ),
+        },
       ]
     : [
         {
@@ -232,8 +225,22 @@ export function NetworkAnalyzerScreen() {
           mono: true,
           render: (packet: PacketRow) => formatEndpoint(packet.dstIp, packet.dstPort),
         },
-        { key: "protocol", header: "Protocol", render: (packet: PacketRow) => packet.protocol ?? "\u2014" },
-        { key: "summary", header: "Info", render: (packet: PacketRow) => packet.summary ?? "\u2014" },
+        {
+          key: "protocol",
+          header: "Protocol",
+          render: (packet: PacketRow) => <ProtocolChip protocol={packet.protocol} />,
+        },
+        {
+          key: "summary",
+          header: "Info",
+          render: (packet: PacketRow) => (
+            <span className="cell-chips">
+              {packet.frameKind ? <FrameKindChip frameKind={packet.frameKind} /> : null}
+              {packet.encrypted ? <EncryptedChip encrypted /> : null}
+              {packet.summary ?? "\u2014"}
+            </span>
+          ),
+        },
       ];
 
   if (captures.loading && !captures.data) return <LoadingState label="Loading captures" />;
@@ -261,8 +268,8 @@ export function NetworkAnalyzerScreen() {
         </Select>
       </Field>
       <div className="toolbar">
-        <Button icon={Upload} variant="primary" onClick={handleImport} disabled={importBusy}>
-          {importBusy ? "Importing" : "Import PCAP"}
+        <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
+          Import capture
         </Button>
         <Button icon={RefreshCw} variant="ghost" onClick={captures.reload} aria-label="Refresh captures" />
       </div>
@@ -273,12 +280,11 @@ export function NetworkAnalyzerScreen() {
     <div className="page">
       <div className="page__bar">
         <p className="page__lede">
-          Decode captures offline: packets are parsed into protocol layers, grouped into conversations, and shown as a
-          hex dump. Payloads are never decrypted.
+          Decode captures offline: packets are parsed into protocol layers, grouped into conversations, and shown as a hex
+          dump. Wireless frames are labelled by kind, and encrypted payloads are never decrypted.
         </p>
       </div>
 
-      {notice ? <Notice tone="ok">{notice}</Notice> : null}
       {actionError ? <Notice tone="error">{actionError}</Notice> : null}
 
       {!hasCaptures ? (
@@ -286,17 +292,19 @@ export function NetworkAnalyzerScreen() {
           <EmptyState
             icon={Inbox}
             title="No captures imported"
-            description="Import a .pcap or .pcapng file to decode Ethernet, IP, TCP, UDP, ICMP, DNS, HTTP and TLS records. Unsupported link types are reported instead of aborting the import."
+            description="Import a .pcap or .pcapng file to decode Ethernet, 802.11, IP, TCP, UDP, ICMP, DNS, HTTP and TLS records. Unsupported link types are reported instead of aborting the import."
             action={
-              <Button icon={Upload} variant="primary" onClick={handleImport} disabled={importBusy}>
-                {importBusy ? "Importing" : "Import PCAP"}
+              <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
+                Import capture
               </Button>
             }
           />
         </Panel>
       ) : (
         <div className="network">
-          <Panel title="Capture" meta={formatNumber(captureList.length)}>{captureBar}</Panel>
+          <Panel title="Capture" meta={formatNumber(captureList.length)}>
+            {captureBar}
+          </Panel>
 
           <div className="network__main">
             <Panel title="Conversations" meta={formatNumber(flows.data ? flows.data.length : 0)} flush>
@@ -322,14 +330,10 @@ export function NetworkAnalyzerScreen() {
                       className={"record" + (flow.id === activeFlowId ? " is-active" : "")}
                       onClick={() => void selectFlow(flow)}
                     >
-                      <span className="record__title mono">
-                        {formatEndpoint(flow.srcIp, flow.srcPort)}
-                      </span>
-                      <span className="record__title mono">
-                        {"\u2192 " + formatEndpoint(flow.dstIp, flow.dstPort)}
-                      </span>
+                      <span className="record__title mono">{formatEndpoint(flow.srcIp, flow.srcPort)}</span>
+                      <span className="record__title mono">{"\u2192 " + formatEndpoint(flow.dstIp, flow.dstPort)}</span>
                       <span className="record__meta">
-                        <span>{flow.transport}</span>
+                        <ProtocolChip protocol={flow.transport} label={flow.transport.toUpperCase()} />
                         <span>{formatNumber(flow.packetCount)} packets</span>
                         <span>{formatBytes(flow.bytesTotal)}</span>
                       </span>
@@ -359,12 +363,7 @@ export function NetworkAnalyzerScreen() {
             >
               <div className="panel__body">
                 {activeFlow ? null : (
-                  <FilterBuilder
-                    fields={PACKET_FIELDS}
-                    value={filters}
-                    onChange={changeFilters}
-                    label="Packet filters"
-                  />
+                  <FilterBuilder fields={PACKET_FIELDS} value={filters} onChange={changeFilters} label="Packet filters" />
                 )}
               </div>
               {packets.loading && !activeFlow ? (
@@ -408,25 +407,43 @@ export function NetworkAnalyzerScreen() {
           </div>
 
           <div className="network__inspect">
-            <Panel title="Decoded layers" meta={packetDetail ? "Packet " + String(packetDetail.packet.packetNo) : undefined}>
+            <Panel
+              title="Decoded layers"
+              meta={packetDetail ? "Packet " + String(packetDetail.packet.packetNo) : undefined}
+            >
               {detailLoading ? (
                 <LoadingState label="Decoding packet" />
               ) : detailError ? (
                 <ErrorState message={detailError} />
               ) : packetDetail ? (
-                <>
+                <div className="stack--tight">
+                  <div className="cell-chips">
+                    <ProtocolChip protocol={packetDetail.packet.protocol} />
+                    <FrameKindChip frameKind={packetDetail.packet.frameKind} />
+                    <EncryptedChip encrypted={packetDetail.packet.encrypted} />
+                  </div>
                   {packetDetail.unsupported ? <Notice tone="error">{packetDetail.unsupported}</Notice> : null}
                   <LayerTree layers={packetDetail.layers} />
-                </>
+                </div>
               ) : (
-                <EmptyState compact icon={Layers} title="No packet selected" description="Choose a packet in the list to inspect its decoded layers." />
+                <EmptyState
+                  compact
+                  icon={Layers}
+                  title="No packet selected"
+                  description="Choose a packet in the list to inspect its decoded layers."
+                />
               )}
             </Panel>
             <Panel title="Hex + ASCII">
               {packetDetail ? (
                 <HexView hex={packetDetail.hex} ascii={packetDetail.ascii} />
               ) : (
-                <EmptyState compact icon={Layers} title="No packet selected" description="Raw bytes appear here as 16 bytes per line." />
+                <EmptyState
+                  compact
+                  icon={Layers}
+                  title="No packet selected"
+                  description="Raw bytes appear here as 16 bytes per line."
+                />
               )}
             </Panel>
           </div>

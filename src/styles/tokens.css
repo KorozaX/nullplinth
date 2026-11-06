@@ -1,40 +1,65 @@
-/* NULLPLINTH design tokens: Nothing-OS-inspired industrial minimalism. */
+/* NULLPLINTH design tokens: industrial technical brutalism, dark only.
+   Single source of truth for every semantic colour. */
 :root {
   color-scheme: dark;
 
-  /* Base surfaces */
-  --bg: #0f0f10;
-  --bg-deep: #0a0a0b;
-  --surface: #141416;
-  --surface-raised: #19191c;
-  --surface-hover: #1e1e21;
-  --surface-active: #232327;
+  /* Core surfaces: near-black background, dark slate surfaces */
+  --bg: #0a0c0f;
+  --bg-deep: #07090c;
+  --surface: #0f1318;
+  --surface-raised: #141a21;
+  --surface-hover: #19212a;
+  --surface-active: #1e2833;
 
-  /* 1px lines */
-  --line-faint: #1b1b1e;
-  --line: #262629;
-  --line-strong: #35353a;
+  /* 1px hairlines */
+  --line-faint: #172029;
+  --line: #22303c;
+  --line-strong: #2f4354;
   --border: 1px solid var(--line);
 
   /* Text */
-  --fg: #eceae4;
-  --fg-secondary: #b4b3ad;
-  --fg-muted: #8b8a85;
-  --fg-dim: #646460;
+  --fg: #e6edf3;
+  --fg-secondary: #afbdca;
+  --fg-muted: #7d8c9b;
+  --fg-dim: #5a6a78;
+  --fg-bright: #f4f2ec;
 
-  /* The single signal colour: critical alerts and selected states only */
-  --signal: #c2302a;
-  --signal-bright: #d8483f;
-  --signal-wash: rgba(194, 48, 42, 0.12);
-  --signal-line: rgba(194, 48, 42, 0.55);
+  /* Primary accent: electric cyan */
+  --accent: #3fc6f0;
+  --accent-strong: #74e0ff;
+  --accent-wash: rgba(63, 198, 240, 0.10);
+  --accent-line: rgba(63, 198, 240, 0.45);
+  --selected: var(--accent);
 
-  /* Severity ladder: red is reserved for critical, everything else is neutral */
-  --sev-critical: var(--signal-bright);
-  --sev-high: #e3e0d7;
-  --sev-medium: #b4b3ad;
-  --sev-low: #8b8a85;
-  --sev-info: #646460;
-  --ok: #86a37f;
+  /* Severity scale */
+  --sev-critical: #ff4d5a;
+  --sev-high: #ff8a3d;
+  --sev-medium: #f5c33b;
+  --sev-low: #5b9dff;
+  --sev-info: #8a94a0;
+  --sev-success: #3dd68c;
+  --sev-critical-line: rgba(255, 77, 90, 0.5);
+  --sev-critical-wash: rgba(255, 77, 90, 0.12);
+
+  /* Protocol series */
+  --proto-tcp: #4c9aff;
+  --proto-udp: #a78bfa;
+  --proto-dns: #35d6e8;
+  --proto-http: #45c97a;
+  --proto-tls: #c3a6ff;
+  --proto-icmp: #ffb454;
+  --proto-eth: #7b93a8;
+  --proto-ip: #2dd4bf;
+  --proto-other: #8a94a0;
+
+  /* Success + back-compat aliases. Red means critical only. */
+  --ok: var(--sev-success);
+  --ok-line: rgba(61, 214, 140, 0.45);
+  --ok-wash: rgba(61, 214, 140, 0.10);
+  --signal: var(--sev-critical);
+  --signal-bright: var(--sev-critical);
+  --signal-line: var(--sev-critical-line);
+  --signal-wash: var(--sev-critical-wash);
 
   /* Type */
   --font-sans: "Segoe UI", "Inter", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
@@ -67,6 +92,13 @@
   --sidebar-w: 236px;
   --drawer-w: 520px;
 
-  --overlay: rgba(6, 6, 7, 0.62);
+  /* Charts */
+  --chart-grid: #1b2732;
+  --chart-axis: var(--fg-dim);
+
+  --scroll-thumb: #2b2b2f;
+  --scroll-thumb-hover: #3a3a40;
+
+  --overlay: rgba(4, 6, 9, 0.74);
   --trans: 90ms linear;
 }

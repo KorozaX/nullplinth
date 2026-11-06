@@ -25,6 +25,8 @@ const preview: CsvPreview = {
   ],
   detectedDelimiter: ",",
   hasHeader: true,
+  suggestedMapping: {},
+  estimatedRows: 1200,
 };
 
 function Harness({ onImported }: { onImported: (result: ImportResult) => void }) {
@@ -116,7 +118,8 @@ describe("CsvWizard", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Destination IP" }), "dst");
     await user.click(screen.getByRole("button", { name: "Import CSV" }));
 
-    expect(await screen.findByText(/Imported 120 events/)).toBeInTheDocument();
+    expect(await screen.findByText(/Successfully imported 120 events/)).toBeInTheDocument();
+    expect(screen.getByText(/Skipped 3 records/)).toBeInTheDocument();
     expect(screen.getByText(/record 4: unparsable timestamp/)).toBeInTheDocument();
     expect(vi.mocked(api.importFile)).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -133,5 +136,36 @@ describe("CsvWizard", () => {
 
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(onImported).toHaveBeenCalledWith(expect.objectContaining({ imported: 120 }));
+  });
+
+  it("pre-fills the suggested mapping, shows estimated rows and warns about skipped rows", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.previewCsv).mockResolvedValue({
+      columns: ["event_time", "src", "msg"],
+      rows: [
+        ["not-a-timestamp", "10.0.0.5", "hello"],
+        ["also-bad", "10.0.0.6", "world"],
+      ],
+      detectedDelimiter: ";",
+      hasHeader: true,
+      suggestedMapping: { ts: "event_time", srcIp: "src", message: "msg" },
+      estimatedRows: 5000,
+    });
+
+    render(<Harness onImported={() => undefined} />);
+    await reachPreview(user);
+
+    expect(screen.getByText(/~5,000 total rows/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continue to mapping" }));
+
+    expect(screen.getByRole("combobox", { name: "Timestamp column" })).toHaveValue("event_time");
+    expect(screen.getByRole("combobox", { name: "Source IP" })).toHaveValue("src");
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("msg");
+    expect(screen.getByText(/3 column mappings were suggested/)).toBeInTheDocument();
+
+    expect(screen.getByText(/2 of 2 sample rows have an unparsable timestamp/)).toBeInTheDocument();
+    expect(screen.getByText(/About 5,000 of 5,000 estimated rows will be skipped/)).toBeInTheDocument();
+    expect(screen.getByText(/Every sample row has an unparsable timestamp/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import CSV" })).toBeDisabled();
   });
 });

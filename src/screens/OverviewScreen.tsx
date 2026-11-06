@@ -1,106 +1,64 @@
 import { useState } from "react";
-import { Download, FileSpreadsheet, Inbox, Play, RefreshCw, ShieldAlert } from "lucide-react";
+import { Download, FileSpreadsheet, Inbox, Play, RefreshCw } from "lucide-react";
 
 import { api } from "../services/api";
-import type { Alert, Count, Overview } from "../types/contracts";
+import type { Alert, Dataset, EventQuery, EventRow } from "../types/contracts";
 import { useMode } from "../context/ModeContext";
-import { errorMessage, useLoad } from "../lib/async";
-import { pickFile } from "../lib/dialog";
-import { formatBytes, formatDuration, formatNumber, formatTimestamp } from "../lib/format";
+import { useWorkspace } from "../context/WorkspaceContext";
+import { useImport } from "../components/ImportWorkflow";
+import { useLoad } from "../lib/async";
+import { formatBytes, formatEndpoint, formatNumber, formatTimestamp } from "../lib/format";
+import { protocolColor, protocolLabel, severityColor, severityLabel } from "../lib/semantic";
 import { Button } from "../components/ui/Button";
-import { EmptyState, ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
+import { EmptyState, ErrorState, LoadingState } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
-import { SeverityBadge } from "../components/ui/Badge";
+import { SeverityBadge, StatusChip } from "../components/ui/Badge";
 import { DataTable } from "../components/ui/Table";
 import type { Column } from "../components/ui/Table";
 import { MetricCard } from "../components/MetricCard";
-import { VolumeChart } from "../components/VolumeChart";
-import { CsvWizard } from "../components/CsvWizard";
+import { DistributionList, VolumeChart } from "../components/VolumeChart";
 import type { SectionId } from "../shell/sections";
 
-function CountList({ counts }: { counts: readonly Count[] }) {
-  if (counts.length === 0) return <p className="muted">No data for this range.</p>;
-  const peak = counts.reduce((max, item) => Math.max(max, item.count), 1);
-  return (
-    <ul className="count-list">
-      {counts.slice(0, 6).map((item) => (
-        <li className="count-list__item" key={item.key}>
-          <span className="count-list__label mono">{item.key.length > 0 ? item.key : "(empty)"}</span>
-          <span className="count-list__bar" aria-hidden="true">
-            <span
-              className="count-list__fill"
-              style={{ width: String(Math.max(2, (item.count / peak) * 100)) + "%" }}
-            />
-          </span>
-          <span className="count-list__value mono">{formatNumber(item.count)}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function alertBreakdown(data: Overview): string {
-  if (data.alertsBySeverity.length === 0) return "No alerts";
-  return data.alertsBySeverity.map((item) => formatNumber(item.count) + " " + item.key).join(" / ");
-}
+const RECENT_QUERY: EventQuery = {
+  datasetIds: [],
+  sourceTypes: [],
+  fromTs: null,
+  toTs: null,
+  filters: [],
+  text: null,
+  sort: "ts",
+  sortDir: "desc",
+  page: 1,
+  pageSize: 5,
+};
 
 export function OverviewScreen({ onNavigate }: { onNavigate: (section: SectionId) => void }) {
   const { mode, isAnalyst } = useMode();
-  const overview = useLoad(() => api.getOverview(), []);
-  const [busy, setBusy] = useState<"import" | "demo" | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [wizardOpen, setWizardOpen] = useState(false);
-
-  async function handleImport() {
-    const path = await pickFile("Import log file", [
-      { name: "Log files", extensions: ["json", "jsonl", "ndjson", "log", "tsv", "csv"] },
-    ]);
-    if (!path) return;
-    setBusy("import");
-    setActionError(null);
-    setNotice(null);
-    try {
-      const result = await api.importFile({ path });
-      const skipped = result.skipped > 0 ? " Skipped " + formatNumber(result.skipped) + " malformed records." : "";
-      setNotice(
-        "Imported " + formatNumber(result.imported) + " events in " + formatDuration(result.durationMs) + "." + skipped,
-      );
-      overview.reload();
-    } catch (cause) {
-      setActionError(errorMessage(cause));
-    } finally {
-      setBusy(null);
-    }
-  }
+  const { version, refresh } = useWorkspace();
+  const { beginImport, importDemo } = useImport();
+  const overview = useLoad(() => api.getOverview(), [version]);
+  const datasets = useLoad(() => api.listDatasets(), [version]);
+  const recentEvents = useLoad(() => api.searchEvents(RECENT_QUERY), [version]);
+  const [busy, setBusy] = useState<"demo" | null>(null);
 
   async function handleDemo() {
     setBusy("demo");
-    setActionError(null);
-    setNotice(null);
-    try {
-      const imported = await api.loadDemoData();
-      setNotice("Loaded the synthetic demo dataset with " + formatNumber(imported) + " events.");
-      overview.reload();
-    } catch (cause) {
-      setActionError(errorMessage(cause));
-    } finally {
-      setBusy(null);
-    }
+    await importDemo();
+    setBusy(null);
   }
 
   const actions = (
     <div className="toolbar">
-      <Button icon={Download} variant="primary" onClick={handleImport} disabled={busy !== null}>
-        {busy === "import" ? "Importing" : "Import data"}
+      <Button icon={Download} variant="primary" onClick={() => void beginImport()} disabled={busy !== null}>
+        Import data
       </Button>
-      <Button icon={FileSpreadsheet} onClick={() => setWizardOpen(true)} disabled={busy !== null}>
-        CSV wizard
+      <Button icon={FileSpreadsheet} onClick={() => void beginImport()} disabled={busy !== null}>
+        Import CSV
       </Button>
       <Button icon={Play} onClick={handleDemo} disabled={busy !== null}>
         {busy === "demo" ? "Loading demo" : "Load demo dataset"}
       </Button>
-      <Button icon={RefreshCw} variant="ghost" onClick={overview.reload} aria-label="Refresh overview" />
+      <Button icon={RefreshCw} variant="ghost" onClick={refresh} aria-label="Refresh overview" />
     </div>
   );
 
@@ -110,60 +68,159 @@ export function OverviewScreen({ onNavigate }: { onNavigate: (section: SectionId
   if (!data) return <LoadingState label="Loading overview" />;
 
   const hasData = data.totalEvents > 0 || data.datasetCount > 0 || data.captureCount > 0 || data.alertTotal > 0;
+  const severityItems = data.alertsBySeverity.slice().sort((a, b) => b.count - a.count);
+  const datasetRows: readonly Dataset[] = datasets.data ?? [];
+
   const alertColumns: ReadonlyArray<Column<Alert>> = isAnalyst
     ? [
-        { key: "severity", header: "Severity", render: (alert: Alert) => <SeverityBadge severity={alert.severity} /> },
+        { key: "severity", header: "Severity", width: "96px", render: (alert: Alert) => <SeverityBadge severity={alert.severity} /> },
         { key: "title", header: "Alert", render: (alert: Alert) => alert.title },
         { key: "rule", header: "Rule", mono: true, render: (alert: Alert) => alert.rule },
-        { key: "status", header: "Status", render: (alert: Alert) => alert.status },
+        { key: "status", header: "Status", render: (alert: Alert) => <StatusChip status={alert.status} /> },
         { key: "createdAt", header: "Created", mono: true, render: (alert: Alert) => formatTimestamp(alert.createdAt, mode) },
       ]
     : [
-        { key: "severity", header: "Severity", render: (alert: Alert) => <SeverityBadge severity={alert.severity} /> },
+        { key: "severity", header: "Severity", width: "96px", render: (alert: Alert) => <SeverityBadge severity={alert.severity} /> },
         { key: "title", header: "Alert", render: (alert: Alert) => alert.title },
-        { key: "status", header: "Status", render: (alert: Alert) => alert.status },
+        { key: "status", header: "Status", render: (alert: Alert) => <StatusChip status={alert.status} /> },
+        { key: "createdAt", header: "Created", mono: true, render: (alert: Alert) => formatTimestamp(alert.createdAt, mode) },
       ];
+
+  const datasetColumns: ReadonlyArray<Column<Dataset>> = [
+    { key: "name", header: "Dataset", render: (dataset: Dataset) => dataset.name },
+    { key: "sourceType", header: "Type", render: (dataset: Dataset) => <span className="chip chip--other">{dataset.sourceType}</span> },
+    {
+      key: "recordCount",
+      header: "Records",
+      mono: true,
+      align: "right",
+      render: (dataset: Dataset) => formatNumber(dataset.recordCount),
+    },
+    {
+      key: "importedAt",
+      header: "Imported",
+      mono: true,
+      render: (dataset: Dataset) => formatTimestamp(dataset.importedAt, mode),
+    },
+  ];
+
+  const activityColumns: ReadonlyArray<Column<EventRow>> = isAnalyst
+    ? [
+        {
+          key: "ts",
+          header: "Time",
+          mono: true,
+          width: "150px",
+          render: (event: EventRow) => formatTimestamp(event.ts, mode),
+        },
+        { key: "severity", header: "Severity", width: "96px", render: (event: EventRow) => <SeverityBadge severity={event.severity} /> },
+        {
+          key: "srcIp",
+          header: "Source",
+          mono: true,
+          render: (event: EventRow) => formatEndpoint(event.srcIp, event.srcPort),
+        },
+        { key: "message", header: "Event", render: (event: EventRow) => event.message ?? "\u2014" },
+      ]
+    : [
+        {
+          key: "ts",
+          header: "Time",
+          mono: true,
+          width: "150px",
+          render: (event: EventRow) => formatTimestamp(event.ts, mode),
+        },
+        { key: "severity", header: "Severity", width: "96px", render: (event: EventRow) => <SeverityBadge severity={event.severity} /> },
+        { key: "message", header: "What happened", render: (event: EventRow) => event.message ?? "\u2014" },
+      ];
+
+  const recentRows = recentEvents.data ? recentEvents.data.events : [];
 
   return (
     <div className="page">
       <div className="page__bar">
         <p className="page__lede">
-          NULLPLINTH works entirely on this machine. Import logs or packet captures, search normalized events, and let
-          the detection rules surface what deserves a second look.
+          Everything runs on this machine. Import logs, drop files anywhere in the window, or load the deterministic demo
+          dataset to explore the workbench.
         </p>
         {actions}
       </div>
 
-      {notice ? <Notice tone="ok">{notice}</Notice> : null}
-      {actionError ? <Notice tone="error">{actionError}</Notice> : null}
-
       <div className="metrics">
-        <MetricCard label="Events" value={formatNumber(data.totalEvents)} hint={formatNumber(data.datasetCount) + " datasets"} />
-        <MetricCard label="Datasets" value={formatNumber(data.datasetCount)} hint="Imported files" />
-        <MetricCard label="Alerts" value={formatNumber(data.alertTotal)} signal hint={alertBreakdown(data)} />
-        <MetricCard label="Packets" value={formatNumber(data.packetCount)} hint={formatNumber(data.captureCount) + " captures"} />
-        <MetricCard label="Investigations" value={formatNumber(data.investigationCount)} hint="Case files" />
-        <MetricCard label="Conversations" value={formatNumber(data.flowSummary.flowCount)} hint={formatBytes(data.flowSummary.totalBytes)} />
+        <MetricCard label="Events" value={formatNumber(data.totalEvents)} tone="accent" hint={formatNumber(data.datasetCount) + " datasets"} />
+        <MetricCard label="Datasets" value={formatNumber(data.datasetCount)} hint={formatNumber(data.captureCount) + " captures"} />
+        <MetricCard
+          label="Alerts"
+          value={formatNumber(data.alertTotal)}
+          tone={data.alertTotal > 0 ? "critical" : "default"}
+          hint={
+            severityItems.length > 0
+              ? severityItems.map((item) => severityLabel(item.key) + ": " + formatNumber(item.count)).join("  ")
+              : "No alerts"
+          }
+        />
+        <MetricCard label="Packets" value={formatNumber(data.packetCount)} hint={formatNumber(data.flowSummary.flowCount) + " conversations"} />
+        <MetricCard label="Cases" value={formatNumber(data.investigationCount)} hint="Investigations" />
+        <MetricCard label="Traffic" value={formatBytes(data.flowSummary.totalBytes)} hint={formatNumber(data.flowSummary.tcpFlows) + " TCP / " + formatNumber(data.flowSummary.udpFlows) + " UDP flows"} />
       </div>
 
       {hasData ? (
         <>
-          <Panel title="Event volume" meta={isAnalyst ? formatNumber(data.volumeSeries.length) + " buckets" : undefined}>
+          <Panel title="Event volume" meta={formatNumber(data.volumeSeries.length) + " buckets"}>
             <VolumeChart series={data.volumeSeries} mode={mode} />
           </Panel>
 
           <div className="grid-2">
-            <Panel title="Top source IPs">{<CountList counts={data.topSrcIps} />}</Panel>
-            <Panel title="Top destination IPs">{<CountList counts={data.topDstIps} />}</Panel>
+            <Panel title="Severity distribution" meta={formatNumber(data.alertTotal) + " alerts"}>
+              <DistributionList
+                items={severityItems}
+                colorFor={severityColor}
+                labelFor={severityLabel}
+                unit="alerts"
+                emptyLabel="No alerts recorded yet."
+              />
+            </Panel>
+            <Panel
+              title="Protocol distribution"
+              meta={formatNumber(data.flowSummary.flowCount) + " flows / " + formatBytes(data.flowSummary.totalBytes)}
+            >
+              <DistributionList
+                items={data.protocolDistribution}
+                colorFor={protocolColor}
+                labelFor={protocolLabel}
+                emptyLabel="No protocol telemetry stored."
+              />
+            </Panel>
           </div>
 
           <div className="grid-2">
-            <Panel
-              title="Protocol distribution"
-              meta={isAnalyst ? formatNumber(data.flowSummary.tcpFlows) + " TCP flows" : undefined}
-            >
-              <CountList counts={data.protocolDistribution} />
+            <Panel title="Top source IPs">
+              <DistributionList items={data.topSrcIps} colorFor={protocolColor} labelFor={protocolLabel} />
             </Panel>
+            <Panel title="Top destination IPs">
+              <DistributionList items={data.topDstIps} colorFor={protocolColor} labelFor={protocolLabel} />
+            </Panel>
+          </div>
+
+          <Panel title="Recent activity" meta={formatNumber(recentEvents.data ? recentEvents.data.total : 0) + " events"} flush>
+            {recentEvents.loading ? (
+              <LoadingState label="Loading activity" />
+            ) : recentEvents.error ? (
+              <ErrorState message={recentEvents.error} onRetry={recentEvents.reload} />
+            ) : recentRows.length === 0 ? (
+              <EmptyState compact title="No recent activity" description="Imported events appear here newest first." />
+            ) : (
+              <DataTable
+                label="Recent activity"
+                columns={activityColumns}
+                rows={recentRows}
+                rowKey={(event: EventRow) => event.id}
+                dense
+              />
+            )}
+          </Panel>
+
+          <div className="grid-2">
             <Panel
               title="Recent alerts"
               actions={
@@ -171,11 +228,11 @@ export function OverviewScreen({ onNavigate }: { onNavigate: (section: SectionId
                   View all
                 </Button>
               }
+              flush
             >
               {data.recentAlerts.length === 0 ? (
                 <EmptyState
                   compact
-                  icon={ShieldAlert}
                   title="No alerts yet"
                   description="Run detection from the Alerts screen to evaluate the stored events against the built-in rules."
                 />
@@ -190,6 +247,29 @@ export function OverviewScreen({ onNavigate }: { onNavigate: (section: SectionId
                 />
               )}
             </Panel>
+
+            <Panel
+              title="Datasets"
+              meta={formatNumber(data.datasetCount)}
+              actions={
+                <Button size="sm" variant="ghost" onClick={() => onNavigate("sources")}>
+                  Manage
+                </Button>
+              }
+              flush
+            >
+              {datasetRows.length === 0 ? (
+                <EmptyState compact title="No datasets" description="Imported log files appear here with their record counts." />
+              ) : (
+                <DataTable
+                  label="Datasets"
+                  columns={datasetColumns}
+                  rows={datasetRows.slice(0, 5)}
+                  rowKey={(dataset: Dataset) => dataset.id}
+                  dense
+                />
+              )}
+            </Panel>
           </div>
         </>
       ) : (
@@ -197,10 +277,10 @@ export function OverviewScreen({ onNavigate }: { onNavigate: (section: SectionId
           <EmptyState
             icon={Inbox}
             title="No data imported yet"
-            description="Import a Suricata, Zeek, JSON or CSV log file, or load the deterministic demo dataset to explore the workbench. The demo dataset is synthetic and stays on this machine."
+            description="Import a Suricata, Zeek, JSON or CSV log file, or load the deterministic demo dataset. You can also drag files from your file manager straight onto this window. The demo dataset is synthetic and stays on this machine."
             action={
               <div className="toolbar">
-                <Button icon={Download} variant="primary" onClick={handleImport} disabled={busy !== null}>
+                <Button icon={Download} variant="primary" onClick={() => void beginImport()}>
                   Import data
                 </Button>
                 <Button icon={Play} onClick={handleDemo} disabled={busy !== null}>
@@ -214,17 +294,8 @@ export function OverviewScreen({ onNavigate }: { onNavigate: (section: SectionId
 
       <p className="dim">
         All data stays on this machine. Nothing is uploaded, and imported content is only ever rendered as text.
+        {isAnalyst ? " Detection and parsing run in the local Rust backend." : ""}
       </p>
-
-      <CsvWizard
-        open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
-        onImported={(result) => {
-          setWizardOpen(false);
-          setNotice("Imported " + formatNumber(result.imported) + " events from a CSV file.");
-          overview.reload();
-        }}
-      />
     </div>
   );
 }

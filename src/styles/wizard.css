@@ -92,7 +92,7 @@
 .progress__fill { height: 100%; background: var(--signal); }
 .wizard__ok {
   padding: var(--s3);
-  border: 1px solid #3d4a3b;
+  border: 1px solid var(--ok-line);
   background: rgba(134, 163, 127, 0.08);
   color: var(--fg-secondary);
   font-size: var(--fs-sm);

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("./services/api", () => ({
@@ -33,6 +33,11 @@ vi.mock("./services/api", () => ({
     exportInvestigation: vi.fn(),
     getSettings: vi.fn(),
     saveSettings: vi.fn(),
+    previewImport: vi.fn(),
+    workspaceState: vi.fn(),
+    clearWorkspace: vi.fn(),
+    getPreferences: vi.fn(),
+    savePreferences: vi.fn(),
   },
 }));
 
@@ -73,6 +78,17 @@ beforeEach(() => {
   vi.mocked(api.listAlerts).mockResolvedValue([]);
   vi.mocked(api.listInvestigations).mockResolvedValue([]);
   vi.mocked(api.getSettings).mockResolvedValue(defaultSettings);
+  vi.mocked(api.workspaceState).mockResolvedValue({
+    hasData: false,
+    datasets: 0,
+    events: 0,
+    captures: 0,
+    packets: 0,
+    flows: 0,
+    alerts: 0,
+    investigations: 0,
+  });
+  vi.mocked(api.getPreferences).mockResolvedValue({ startupBehavior: "ask" });
 });
 
 describe("App shell", () => {
@@ -102,14 +118,14 @@ describe("App shell", () => {
 
     const freeText = await screen.findByPlaceholderText("Search messages, hosts, users");
     await user.type(freeText, "failed login");
-    expect(await screen.findByRole("columnheader", { name: "Category" })).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "Event category" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Beginner" }));
 
     expect(screen.getByRole("button", { name: "Beginner" })).toHaveAttribute("aria-pressed", "true");
     expect(freeText).toHaveValue("failed login");
     expect(window.localStorage.getItem("nullplinth.mode")).toBe("beginner");
-    expect(screen.queryByRole("columnheader", { name: "Category" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Event category" })).not.toBeInTheDocument();
     expect(await screen.findByRole("columnheader", { name: "From" })).toBeInTheDocument();
   });
 
@@ -127,18 +143,40 @@ describe("App shell", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Event Explorer" })).toBeInTheDocument();
   });
 
-  it("opens the CSV wizard from the Overview and Data Sources screens", async () => {
+  it("shows the startup welcome once and never again while navigating", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.workspaceState).mockResolvedValue({
+      hasData: true,
+      datasets: 1,
+      events: 10,
+      captures: 0,
+      packets: 0,
+      flows: 0,
+      alerts: 0,
+      investigations: 0,
+    });
+
+    render(<App />);
+
+    expect(await screen.findByTestId("workspace-welcome")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(screen.queryByTestId("workspace-welcome")).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByTestId("workspace-welcome")).not.toBeInTheDocument();
+  });
+
+  it("exposes the unified import entry points from Overview and Data Sources", async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "CSV wizard" }));
-    expect(await screen.findByTestId("csv-wizard")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Close CSV wizard" }));
-    expect(screen.queryByTestId("csv-wizard")).not.toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: "Import data" })).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Import CSV" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Data Sources" }));
-    await user.click(await screen.findByRole("button", { name: "CSV wizard" }));
-    expect(await screen.findByTestId("csv-wizard")).toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: "Import data" })).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Import CSV" })).toBeInTheDocument();
   });
 
   it("renders each screen with mocked backend data", async () => {

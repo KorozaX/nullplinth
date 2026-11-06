@@ -44,7 +44,7 @@ export function eventDetail(event: EventRow): EventDetail {
   };
 }
 
-export function packetRow(id: number): PacketRow {
+export function packetRow(id: number, overrides: Partial<PacketRow> = {}): PacketRow {
   return {
     id,
     captureId: 1,
@@ -61,6 +61,9 @@ export function packetRow(id: number): PacketRow {
     tcpFlags: "SYN",
     payloadLen: 0,
     summary: "TCP SYN",
+    frameKind: null,
+    encrypted: false,
+    ...overrides,
   };
 }
 

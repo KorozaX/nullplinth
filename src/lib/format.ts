@@ -171,3 +171,41 @@ export function formatEndpoint(ip: string | null | undefined, port: number | nul
   if (!ip) return "\u2014";
   return port === null || port === undefined ? ip : ip + ":" + String(port);
 }
+
+/** "06 Nov" without a year, used by compact chart labels and legends. */
+export function formatDateShort(ts: number): string {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "\u2014";
+  return pad(date.getDate()) + " " + MONTHS[date.getMonth()];
+}
+
+/**
+ * Short local axis label. Intraday ranges show only a clock, multi-day ranges
+ * add the day, long ranges drop the clock. Never prints epoch milliseconds.
+ */
+export function formatAxisTimestamp(ts: number, spanMs: number): string {
+  if (!Number.isFinite(ts)) return "\u2014";
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return "\u2014";
+  const clock = pad(date.getHours()) + ":" + pad(date.getMinutes());
+  const span = Number.isFinite(spanMs) && spanMs > 0 ? spanMs : 0;
+  if (span < 20 * 3600 * 1000) return clock;
+  if (span < 30 * 24 * 3600 * 1000) return formatDateShort(ts) + " " + clock;
+  if (span < 365 * 24 * 3600 * 1000) return formatDateShort(ts);
+  return MONTHS[date.getMonth()] + " " + String(date.getFullYear());
+}
+
+/** Compact "06 Nov, 17:00 - 22:00" range for chart legends. */
+export function formatRangeLabel(from: number, to: number): string {
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return "\u2014";
+  const start = new Date(from);
+  const end = new Date(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "\u2014";
+  const clock = (value: Date) => pad(value.getHours()) + ":" + pad(value.getMinutes());
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  if (sameDay) return formatDateShort(from) + ", " + clock(start) + " - " + clock(end);
+  return formatDateShort(from) + " " + clock(start) + " - " + formatDateShort(to) + " " + clock(end);
+}

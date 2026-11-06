@@ -208,3 +208,39 @@ fn preferences_default_to_ask_and_validate_values() {
     assert!(bad.is_err(), "unknown startup preference must be rejected");
     let _ = pcap::list_captures(&conn).unwrap();
 }
+/// Manual check against a copy of a real, large workspace database.
+/// Run: set NULLPLINTH_DB_COPY=<path to a COPY>; cargo test --test workspace_tests -- --ignored
+#[test]
+#[ignore = "operates on a real database copy supplied via NULLPLINTH_DB_COPY"]
+fn clears_a_real_database_copy() {
+    use std::path::PathBuf;
+    let Ok(path) = std::env::var("NULLPLINTH_DB_COPY") else {
+        eprintln!("SKIP: NULLPLINTH_DB_COPY not set");
+        return;
+    };
+    let db = Db::open(PathBuf::from(&path)).expect("open database copy");
+    let conn = db.conn().unwrap();
+    let before = workspace::state(&conn).unwrap();
+    eprintln!("BEFORE: {before:?}");
+    assert!(before.has_data);
+
+    let started = std::time::Instant::now();
+    let cleared = workspace::clear(&db, None).unwrap();
+    eprintln!("CLEAR took {:?}: {cleared:?}", started.elapsed());
+
+    let after = workspace::state(&conn).unwrap();
+    eprintln!("AFTER: {after:?}");
+    assert!(!after.has_data);
+    assert_eq!(after.events, 0);
+    assert_eq!(after.packets, 0);
+    let fts: i64 = conn.query_row("SELECT COUNT(*) FROM events_fts", [], |r| r.get(0)).unwrap();
+    assert_eq!(fts, 0);
+    let orphans: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM alert_evidence) + (SELECT COUNT(*) FROM investigation_alerts) + (SELECT COUNT(*) FROM investigation_notes)",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(orphans, 0);
+}

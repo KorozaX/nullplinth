@@ -20,11 +20,15 @@ pub struct Decoded {
     pub payload_len: i64,
     pub summary: String,
     pub layers: Vec<LayerNode>,
+    /// 802.11 frame class (management | control | data); None for non-wireless frames.
+    pub frame_kind: Option<String>,
+    /// True when an 802.11 frame was protected/encrypted.
+    pub encrypted: bool,
 }
 
 // ------------------------------------------------------------------ helpers
 
-fn layer(name: &str, label: impl Into<String>) -> LayerNode {
+pub(crate) fn layer(name: &str, label: impl Into<String>) -> LayerNode {
     LayerNode {
         name: name.to_string(),
         label: label.into(),
@@ -33,7 +37,7 @@ fn layer(name: &str, label: impl Into<String>) -> LayerNode {
     }
 }
 
-fn fld(name: &str, value: impl Into<String>) -> ProtoField {
+pub(crate) fn fld(name: &str, value: impl Into<String>) -> ProtoField {
     ProtoField {
         name: name.to_string(),
         value: value.into(),
@@ -45,17 +49,17 @@ fn rd(data: &[u8], off: usize, len: usize) -> Option<&[u8]> {
     data.get(off..end)
 }
 
-fn be16(data: &[u8], off: usize) -> Option<u16> {
+pub(crate) fn be16(data: &[u8], off: usize) -> Option<u16> {
     let b = rd(data, off, 2)?;
     Some(u16::from_be_bytes([b[0], b[1]]))
 }
 
-fn be32(data: &[u8], off: usize) -> Option<u32> {
+pub(crate) fn be32(data: &[u8], off: usize) -> Option<u32> {
     let b = rd(data, off, 4)?;
     Some(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-fn mac_str(data: &[u8], off: usize) -> Option<String> {
+pub(crate) fn mac_str(data: &[u8], off: usize) -> Option<String> {
     let b = rd(data, off, 6)?;
     Some(format!(
         "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -103,6 +107,8 @@ pub fn decode_frame(link_type: i32, data: &[u8]) -> Decoded {
     let mut d = Decoded::default();
     match link_type {
         1 => decode_ethernet(&mut d, data),
+        105 => super::wifi::decode_80211(&mut d, data),
+        127 => super::wifi::decode_radiotap(&mut d, data),
         101 | 228 => decode_ipv4(&mut d, data, 0),
         229 => decode_ipv6(&mut d, data, 0),
         other => {
@@ -195,7 +201,7 @@ fn decode_ethernet(d: &mut Decoded, data: &[u8]) {
 
 // ------------------------------------------------------------------- IPv4
 
-fn decode_ipv4(d: &mut Decoded, data: &[u8], off: usize) {
+pub(crate) fn decode_ipv4(d: &mut Decoded, data: &[u8], off: usize) {
     let mut ip = layer("ip", "Internet Protocol Version 4");
     if data.len() < off + 20 {
         ip.fields
@@ -319,7 +325,7 @@ fn decode_ipv4(d: &mut Decoded, data: &[u8], off: usize) {
 
 // ------------------------------------------------------------------- IPv6
 
-fn decode_ipv6(d: &mut Decoded, data: &[u8], off: usize) {
+pub(crate) fn decode_ipv6(d: &mut Decoded, data: &[u8], off: usize) {
     let mut ip = layer("ip", "Internet Protocol Version 6");
     if data.len() < off + 40 {
         ip.fields.push(fld("Note", "truncated: fewer than 40 header bytes"));
@@ -623,7 +629,7 @@ fn decode_icmp(d: &mut Decoded, msg: &[u8], v6: bool) {
 
 // -------------------------------------------------------------------- ARP
 
-fn decode_arp(d: &mut Decoded, data: &[u8], off: usize) {
+pub(crate) fn decode_arp(d: &mut Decoded, data: &[u8], off: usize) {
     let mut arp = layer("arp", "Address Resolution Protocol");
     d.protocol = "ARP".to_string();
     if data.len() < off + 28 {

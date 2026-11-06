@@ -446,7 +446,7 @@ fn unsupported_link_type_keeps_raw_bytes_and_explains() {
         .expect("import with unsupported link type must succeed");
     assert_eq!(capture.packet_count, 1);
     assert!(
-        capture.link_type.as_deref().unwrap_or("").contains("105"),
+        capture.link_type.as_deref().unwrap_or("").contains("113"),
         "link type was {:?}",
         capture.link_type
     );
@@ -571,4 +571,478 @@ fn import_progress_reports_final_count() {
     assert_eq!(capture.packet_count, 7);
     assert!(!seen.is_empty());
     assert_eq!(seen.last().copied(), Some((7, Some(7))));
+}
+// ------------------------------------------------------------- wireless
+
+fn example_file(name: &str) -> String {
+    // The sample captures may live next to the repository or inside it.
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest.join("..").join("..").join("Example Files"),
+        manifest.join("..").join("Example Files"),
+        manifest.join("Example Files"),
+    ];
+    for dir in candidates.iter() {
+        let candidate = dir.join(name);
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    candidates[0].join(name).to_string_lossy().to_string()
+}
+
+fn layer_names(detail: &nullplinth_lib::types::PacketDetail) -> Vec<String> {
+    detail.layers.iter().map(|l| l.name.clone()).collect()
+}
+
+/// Page through the packet list to collect up to limit rows (page size is capped at 500).
+fn packet_sample(conn: &Connection, capture_id: i64, limit: usize) -> Vec<PacketRow> {
+    let mut out: Vec<PacketRow> = Vec::new();
+    let mut page = 0u32;
+    while out.len() < limit {
+        let query = PacketQuery {
+            capture_id: Some(capture_id),
+            filters: vec![],
+            from_ts: None,
+            to_ts: None,
+            sort: "packetNo".to_string(),
+            sort_dir: "asc".to_string(),
+            page,
+            page_size: 500,
+        };
+        let result = pcap::search_packets(conn, &query).expect("search packet sample");
+        if result.packets.is_empty() {
+            break;
+        }
+        let remaining = limit - out.len();
+        out.extend(result.packets.into_iter().take(remaining));
+        page += 1;
+    }
+    out
+}
+
+#[test]
+fn wifi_management_control_and_data_decode() {
+    let t = TestDb::new("wifi");
+    let conn = t.conn();
+    let capture =
+        pcap::import_core(&conn, &fixture("wifi_80211.pcap")).expect("import wifi_80211.pcap");
+    assert_eq!(capture.packet_count, 10);
+    assert!(capture
+        .link_type
+        .as_deref()
+        .unwrap_or("")
+        .contains("IEEE 802.11"));
+
+    let rows = all_packets(&conn, capture.id);
+    assert_eq!(rows.len(), 10);
+
+    // 1: management beacon with SSID and channel.
+    assert_eq!(rows[0].frame_kind.as_deref(), Some("management"));
+    assert!(!rows[0].encrypted);
+    assert_eq!(rows[0].protocol.as_deref(), Some("802.11 Beacon"));
+    let summary = rows[0].summary.as_deref().unwrap_or("");
+    assert!(summary.contains("SSID NULLPLINTH-AP"), "summary was {summary}");
+    assert!(summary.contains("channel 6"), "summary was {summary}");
+    let detail = pcap::get_packet(&conn, rows[0].id).expect("beacon detail");
+    assert!(detail.unsupported.is_none());
+    assert!(layer_names(&detail).iter().any(|n| n == "wlan"));
+    let mgmt = detail
+        .layers
+        .iter()
+        .find(|l| l.name == "wlan_mgmt")
+        .expect("wlan_mgmt layer");
+    assert!(mgmt
+        .fields
+        .iter()
+        .any(|f| f.name == "SSID" && f.value == "NULLPLINTH-AP"));
+    assert!(mgmt
+        .fields
+        .iter()
+        .any(|f| f.name == "DS Parameter" && f.value.contains("channel 6")));
+
+    // 2: management probe request.
+    assert_eq!(rows[1].frame_kind.as_deref(), Some("management"));
+    assert_eq!(rows[1].protocol.as_deref(), Some("802.11 Probe Request"));
+    assert!(rows[1]
+        .summary
+        .as_deref()
+        .unwrap_or("")
+        .contains("SSID NULLPLINTH-AP"));
+
+    // 3+4: control frames.
+    assert_eq!(rows[2].frame_kind.as_deref(), Some("control"));
+    assert_eq!(rows[2].protocol.as_deref(), Some("802.11 RTS"));
+    assert!(rows[2].summary.as_deref().unwrap_or("").contains("RTS"));
+    assert_eq!(rows[3].frame_kind.as_deref(), Some("control"));
+    assert_eq!(rows[3].protocol.as_deref(), Some("802.11 ACK"));
+
+    // 5: data ToDS with LLC/SNAP + IPv4/TCP.
+    assert_eq!(rows[4].frame_kind.as_deref(), Some("data"));
+    assert_eq!(rows[4].protocol.as_deref(), Some("TCP"));
+    assert_eq!(rows[4].src_ip.as_deref(), Some("10.1.2.3"));
+    assert_eq!(rows[4].dst_ip.as_deref(), Some("93.184.216.34"));
+    assert_eq!(rows[4].src_port, Some(51234));
+    assert_eq!(rows[4].dst_port, Some(80));
+    assert_eq!(rows[4].tcp_flags.as_deref(), Some("SYN"));
+    let detail = pcap::get_packet(&conn, rows[4].id).expect("data detail");
+    let names = layer_names(&detail);
+    assert!(
+        names.iter().any(|n| n == "wlan")
+            && names.iter().any(|n| n == "llc")
+            && names.iter().any(|n| n == "ip")
+            && names.iter().any(|n| n == "tcp"),
+        "layers were {names:?}"
+    );
+    let wlan = detail.layers.iter().find(|l| l.name == "wlan").unwrap();
+    assert!(wlan
+        .fields
+        .iter()
+        .any(|f| f.name == "BSSID" && f.value == "02:11:22:33:44:55"));
+    assert!(wlan
+        .fields
+        .iter()
+        .any(|f| f.name == "Type" && f.value == "data"));
+
+    // 6: data FromDS with LLC/SNAP + IPv4/UDP/DNS.
+    assert_eq!(rows[5].frame_kind.as_deref(), Some("data"));
+    assert_eq!(rows[5].protocol.as_deref(), Some("DNS"));
+    assert_eq!(rows[5].src_ip.as_deref(), Some("8.8.8.8"));
+    assert_eq!(rows[5].dst_ip.as_deref(), Some("10.1.2.3"));
+    assert!(rows[5]
+        .summary
+        .as_deref()
+        .unwrap_or("")
+        .contains("DNS response"));
+
+    // 7: protected data frame: metadata decoded, payload never guessed.
+    assert_eq!(rows[6].frame_kind.as_deref(), Some("data"));
+    assert!(rows[6].encrypted, "protected flag must set encrypted");
+    assert_eq!(rows[6].protocol.as_deref(), Some("802.11 Data"));
+    assert_eq!(rows[6].src_ip, None);
+    assert_eq!(rows[6].dst_ip, None);
+    assert!(rows[6]
+        .summary
+        .as_deref()
+        .unwrap_or("")
+        .contains("Protected"));
+    let detail = pcap::get_packet(&conn, rows[6].id).expect("protected detail");
+    assert!(detail
+        .layers
+        .iter()
+        .any(|l| l.name == "wlan_note"
+            && l.fields.iter().any(|f| f.value.contains("encrypted"))));
+
+    // 8: HTTP over 802.11 data.
+    assert_eq!(rows[7].protocol.as_deref(), Some("HTTP"));
+    assert!(rows[7]
+        .summary
+        .as_deref()
+        .unwrap_or("")
+        .contains("GET /index.html"));
+
+    // 9: truncated frame never panics and is marked as truncated.
+    assert_eq!(rows[8].frame_kind.as_deref(), Some("data"));
+    assert_eq!(rows[8].caplen, 20);
+    assert_eq!(rows[8].origlen, 72);
+    assert!(
+        rows[8].summary.as_deref().unwrap_or("").contains("Truncated"),
+        "summary was {:?}",
+        rows[8].summary
+    );
+    let detail = pcap::get_packet(&conn, rows[8].id).expect("truncated detail");
+    assert!(detail.layers.iter().any(|l| l.name == "wlan_note"));
+
+    // 10: malformed reserved frame type.
+    assert_eq!(rows[9].frame_kind, None);
+    assert_eq!(rows[9].protocol.as_deref(), Some("802.11"));
+    assert!(rows[9]
+        .summary
+        .as_deref()
+        .unwrap_or("")
+        .contains("reserved"));
+}
+
+#[test]
+fn wifi_fields_are_filterable() {
+    let t = TestDb::new("wifi_filter");
+    let conn = t.conn();
+    let capture =
+        pcap::import_core(&conn, &fixture("wifi_80211.pcap")).expect("import wifi_80211.pcap");
+
+    let run = |filters: Vec<(&str, &str, &str)>| {
+        let query = PacketQuery {
+            capture_id: Some(capture.id),
+            filters: filters
+                .into_iter()
+                .map(|(field, op, value)| nullplinth_lib::types::FilterRow {
+                    field: field.to_string(),
+                    op: op.to_string(),
+                    value: value.to_string(),
+                })
+                .collect(),
+            from_ts: None,
+            to_ts: None,
+            sort: "packetNo".to_string(),
+            sort_dir: "asc".to_string(),
+            page: 0,
+            page_size: 50,
+        };
+        pcap::search_packets(&conn, &query)
+    };
+
+    assert_eq!(
+        run(vec![("frameKind", "eq", "management")])
+            .expect("frameKind filter")
+            .total,
+        2
+    );
+    assert_eq!(
+        run(vec![("frameKind", "eq", "control")])
+            .expect("frameKind filter")
+            .total,
+        2
+    );
+    assert_eq!(
+        run(vec![("encrypted", "eq", "true")])
+            .expect("encrypted filter")
+            .total,
+        1
+    );
+    assert_eq!(
+        run(vec![("protocol", "contains", "Beacon")])
+            .expect("protocol filter")
+            .total,
+        1
+    );
+    assert_eq!(
+        run(vec![("protocol", "contains", "802.11")])
+            .expect("protocol filter")
+            .total,
+        7
+    );
+    let bad = run(vec![("encrypted", "eq", "maybe")]);
+    assert!(bad.is_err(), "boolean filter must validate its value");
+}
+
+#[test]
+fn radiotap_wrapped_frames_decode() {
+    let t = TestDb::new("radiotap");
+    let conn = t.conn();
+    let capture =
+        pcap::import_core(&conn, &fixture("wifi_radiotap.pcap")).expect("import radiotap capture");
+    assert_eq!(capture.packet_count, 3);
+    assert!(capture
+        .link_type
+        .as_deref()
+        .unwrap_or("")
+        .contains("radiotap"));
+
+    let rows = all_packets(&conn, capture.id);
+    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows[0].protocol.as_deref(), Some("802.11 Beacon"));
+    assert_eq!(rows[0].frame_kind.as_deref(), Some("management"));
+
+    let detail = pcap::get_packet(&conn, rows[0].id).expect("radiotap detail");
+    assert!(detail.unsupported.is_none());
+    assert_eq!(detail.layers[0].name, "radiotap");
+    let radiotap = &detail.layers[0];
+    assert!(radiotap
+        .fields
+        .iter()
+        .any(|f| f.name == "Header Length" && f.value == "15 bytes"));
+    assert!(radiotap
+        .fields
+        .iter()
+        .any(|f| f.name == "Channel Frequency" && f.value == "2412 MHz"));
+    assert!(radiotap
+        .fields
+        .iter()
+        .any(|f| f.name == "Antenna Signal" && f.value == "-42 dBm"));
+    assert_eq!(detail.layers[1].name, "wlan");
+
+    assert_eq!(rows[1].protocol.as_deref(), Some("TCP"));
+    assert_eq!(rows[1].src_ip.as_deref(), Some("10.1.2.3"));
+    assert_eq!(rows[1].dst_port, Some(443));
+    let detail = pcap::get_packet(&conn, rows[1].id).expect("radiotap data detail");
+    let names = layer_names(&detail);
+    assert_eq!(names.first().map(String::as_str), Some("radiotap"));
+    assert!(names.iter().any(|n| n == "wlan"));
+    assert!(names.iter().any(|n| n == "llc"));
+    assert!(names.iter().any(|n| n == "ip"));
+    assert!(names.iter().any(|n| n == "tcp"));
+
+    assert_eq!(rows[2].protocol.as_deref(), Some("802.11 Data"));
+    assert!(rows[2].encrypted);
+    assert_eq!(rows[2].src_ip, None);
+}
+
+#[test]
+fn real_wireless_capture_decodes_when_present() {
+    let path = example_file("evidence-defcon2010.pcap");
+    if !Path::new(&path).exists() {
+        eprintln!("skipping real capture test: {path} is not present");
+        return;
+    }
+    let t = TestDb::new("real_wifi");
+    let conn = t.conn();
+    let capture =
+        pcap::import_core_limited(&conn, &path, 1500).expect("import real 802.11 capture");
+    assert_eq!(capture.packet_count, 1500, "bounded import stores the sample");
+    assert!(capture
+        .link_type
+        .as_deref()
+        .unwrap_or("")
+        .contains("IEEE 802.11"));
+
+    let rows = packet_sample(&conn, capture.id, 1500);
+    assert_eq!(rows.len(), 1500);
+    let with_kind = rows.iter().filter(|r| r.frame_kind.is_some()).count();
+    assert_eq!(
+        with_kind, 1500,
+        "every sampled 802.11 frame must have a frame kind"
+    );
+    let kinds: std::collections::BTreeSet<&str> =
+        rows.iter().filter_map(|r| r.frame_kind.as_deref()).collect();
+    assert!(!kinds.is_empty(), "at least one wireless frame kind decoded");
+    for kind in &kinds {
+        assert!(
+            ["management", "control", "data"].contains(kind),
+            "unexpected frame kind {kind}"
+        );
+    }
+
+    let encrypted = rows.iter().filter(|r| r.encrypted).count();
+    let management = rows
+        .iter()
+        .filter(|r| r.frame_kind.as_deref() == Some("management"))
+        .count();
+    let control = rows
+        .iter()
+        .filter(|r| r.frame_kind.as_deref() == Some("control"))
+        .count();
+    eprintln!(
+        "real wifi sample (bounded import): {} packets, kinds {:?}, mgmt {}, ctrl {}, {} encrypted",
+        rows.len(),
+        kinds,
+        management,
+        control,
+        encrypted
+    );
+    for row in rows.iter().take(5) {
+        eprintln!(
+            "  #{} kind={:?} protocol={:?} src={:?} dst={:?} summary={:?}",
+            row.packet_no, row.frame_kind, row.protocol, row.src_ip, row.dst_ip, row.summary
+        );
+    }
+}
+
+#[test]
+#[ignore = "full 65 MB real capture import; run manually with --ignored for evidence"]
+fn real_wireless_capture_full_import() {
+    let path = example_file("evidence-defcon2010.pcap");
+    if !Path::new(&path).exists() {
+        eprintln!("skipping full real capture test: {path} is not present");
+        return;
+    }
+    let t = TestDb::new("real_wifi_full");
+    let conn = t.conn();
+    let started = std::time::Instant::now();
+    let capture = pcap::import_core(&conn, &path).expect("full import of real 802.11 capture");
+    eprintln!(
+        "full real import: {} packets in {:?}",
+        capture.packet_count,
+        started.elapsed()
+    );
+    assert!(capture.packet_count > 400_000, "expected the full capture");
+    let sample = packet_sample(&conn, capture.id, 1500);
+    let with_kind = sample.iter().filter(|r| r.frame_kind.is_some()).count();
+    let kinds: std::collections::BTreeSet<&str> =
+        sample.iter().filter_map(|r| r.frame_kind.as_deref()).collect();
+    let with_ip = sample
+        .iter()
+        .filter(|r| r.src_ip.is_some() && r.dst_ip.is_some())
+        .count();
+    let protocols: std::collections::BTreeSet<&str> = sample
+        .iter()
+        .filter_map(|r| r.protocol.as_deref())
+        .collect();
+    eprintln!(
+        "full real import: sample frame_kind {with_kind}/1500, kinds {:?}, rows with IPs {with_ip}, protocols {:?}",
+        kinds, protocols
+    );
+    for row in sample.iter().find(|r| r.src_ip.is_some()).into_iter() {
+        eprintln!(
+            "  data sample: #{} protocol={:?} {}:{} -> {}:{} summary={:?}",
+            row.packet_no,
+            row.protocol,
+            row.src_ip.clone().unwrap_or_default(),
+            row.src_port.unwrap_or(0),
+            row.dst_ip.clone().unwrap_or_default(),
+            row.dst_port.unwrap_or(0),
+            row.summary
+        );
+    }
+
+    // Distribution across the whole capture, sampled through the query filters.
+    let run = |filters: Vec<(&str, &str, &str)>| {
+        let query = PacketQuery {
+            capture_id: Some(capture.id),
+            filters: filters
+                .into_iter()
+                .map(|(field, op, value)| nullplinth_lib::types::FilterRow {
+                    field: field.to_string(),
+                    op: op.to_string(),
+                    value: value.to_string(),
+                })
+                .collect(),
+            from_ts: None,
+            to_ts: None,
+            sort: "packetNo".to_string(),
+            sort_dir: "asc".to_string(),
+            page: 0,
+            page_size: 50,
+        };
+        pcap::search_packets(&conn, &query).expect("filtered packet count")
+    };
+    let total = run(vec![]).total;
+    let data = run(vec![("frameKind", "eq", "data")]).total;
+    let encrypted = run(vec![("encrypted", "eq", "true")]).total;
+    assert_eq!(total, capture.packet_count);
+    eprintln!(
+        "full real import: total {total}, data {data}, encrypted {encrypted}"
+    );
+    assert!(data > 0, "the real capture contains decodable data frames");
+    assert!(encrypted > 0, "the real capture contains protected frames");
+
+    // A few concrete data-frame rows for the evidence report.
+    let data_page = run(vec![("frameKind", "eq", "data")]);
+    for row in data_page.packets.iter().take(5) {
+        eprintln!(
+            "data frame sample: #{} protocol={:?} encrypted={} {}:{} -> {}:{} summary={:?}",
+            row.packet_no,
+            row.protocol,
+            row.encrypted,
+            row.src_ip.clone().unwrap_or_default(),
+            row.src_port.unwrap_or(0),
+            row.dst_ip.clone().unwrap_or_default(),
+            row.dst_port.unwrap_or(0),
+            row.summary
+        );
+    }
+    let plaintext = run(vec![("frameKind", "eq", "data"), ("encrypted", "eq", "false")]);
+    eprintln!("full real import: plaintext data frames {}", plaintext.total);
+    for row in plaintext.packets.iter().take(5) {
+        eprintln!(
+            "plaintext data sample: #{} protocol={:?} {}:{} -> {}:{} summary={:?}",
+            row.packet_no,
+            row.protocol,
+            row.src_ip.clone().unwrap_or_default(),
+            row.src_port.unwrap_or(0),
+            row.dst_ip.clone().unwrap_or_default(),
+            row.dst_port.unwrap_or(0),
+            row.summary
+        );
+    }
 }

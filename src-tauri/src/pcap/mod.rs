@@ -7,6 +7,7 @@
 
 mod decode;
 mod reader;
+mod wifi;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -24,7 +25,7 @@ const BATCH_SIZE: usize = 500;
 const PROGRESS_STEP: i64 = 250;
 
 pub const PACKET_COLUMNS: &str = "id, capture_id, packet_no, ts, caplen, origlen, src_ip, dst_ip, \
-    src_port, dst_port, protocol, transport, tcp_flags, payload_len, summary";
+    src_port, dst_port, protocol, transport, tcp_flags, payload_len, summary, frame_kind, encrypted";
 const CAPTURE_COLUMNS: &str = "id, name, file_name, file_hash, file_size, link_type, \
     packet_count, imported_at";
 const FLOW_COLUMNS: &str = "id, capture_id, src_ip, src_port, dst_ip, dst_port, transport, \
@@ -76,7 +77,25 @@ pub fn import_core(conn: &Connection, path: &str) -> AppResult<Capture> {
 }
 
 /// Import with a progress callback receiving (packets_stored, total_or_none).
-pub fn import_with_progress<F>(conn: &Connection, path: &str, mut progress: F) -> AppResult<Capture>
+pub fn import_with_progress<F>(conn: &Connection, path: &str, progress: F) -> AppResult<Capture>
+where
+    F: FnMut(i64, Option<i64>),
+{
+    import_inner(conn, path, None, progress)
+}
+
+/// Import at most max_packets packets. Used to sample very large real-world
+/// captures in tests without paying the full decode/storage cost.
+pub fn import_core_limited(conn: &Connection, path: &str, max_packets: u32) -> AppResult<Capture> {
+    import_inner(conn, path, Some(max_packets as i64), |_, _| {})
+}
+
+fn import_inner<F>(
+    conn: &Connection,
+    path: &str,
+    limit: Option<i64>,
+    mut progress: F,
+) -> AppResult<Capture>
 where
     F: FnMut(i64, Option<i64>),
 {
@@ -113,7 +132,7 @@ where
     let capture_id = conn.last_insert_rowid();
     progress(0, None);
 
-    let outcome = read_and_store(conn, capture_id, path, &mut progress);
+    let outcome = read_and_store(conn, capture_id, path, limit, &mut progress);
     match outcome {
         Ok((meta, packet_count)) => {
             conn.execute(
@@ -136,6 +155,7 @@ fn read_and_store<F>(
     conn: &Connection,
     capture_id: i64,
     path: &str,
+    limit: Option<i64>,
     progress: &mut F,
 ) -> AppResult<(reader::CaptureMeta, i64)>
 where
@@ -144,8 +164,15 @@ where
     let mut batch: Vec<PendingPacket> = Vec::with_capacity(BATCH_SIZE);
     let mut flows: HashMap<FlowKey, FlowAgg> = HashMap::new();
     let mut processed: i64 = 0;
+    let mut stored: i64 = 0;
 
-    let (meta, packet_count) = reader::read_capture(path, |raw| {
+    let (meta, _total) = reader::read_capture(path, |raw| {
+        processed += 1;
+        if let Some(limit) = limit {
+            if stored >= limit {
+                return Ok(());
+            }
+        }
         let decoded = decode::decode_frame(raw.link_type, &raw.data);
         if let Some(key) = FlowKey::from_decoded(&decoded) {
             let agg = flows.entry(key).or_insert_with(FlowAgg::new);
@@ -162,18 +189,18 @@ where
             data: raw.data.clone(),
             decoded,
         });
-        processed += 1;
+        stored += 1;
         if batch.len() >= BATCH_SIZE {
             flush_packets(conn, capture_id, &batch)?;
             batch.clear();
         }
-        progress(processed, None);
+        progress(processed, limit);
         Ok(())
     })?;
 
     flush_packets(conn, capture_id, &batch)?;
     insert_flows(conn, capture_id, &flows)?;
-    Ok((meta, packet_count))
+    Ok((meta, stored))
 }
 
 struct PendingPacket {
@@ -194,8 +221,8 @@ fn flush_packets(conn: &Connection, capture_id: i64, batch: &[PendingPacket]) ->
         let mut stmt = tx.prepare_cached(
             "INSERT INTO packets (capture_id, packet_no, ts, caplen, origlen, src_ip, dst_ip,
                 src_port, dst_port, protocol, transport, tcp_flags, payload_len, summary, layers,
-                raw_hex)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                raw_hex, frame_kind, encrypted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )?;
         for p in batch {
             let layers = serde_json::to_string(&p.decoded.layers)?;
@@ -216,6 +243,8 @@ fn flush_packets(conn: &Connection, capture_id: i64, batch: &[PendingPacket]) ->
                 p.decoded.summary,
                 layers,
                 hex_spaced(&p.data),
+                p.decoded.frame_kind,
+                p.decoded.encrypted as i64,
             ])?;
         }
     }
@@ -379,6 +408,7 @@ enum Kind {
     Text,
     Int,
     Ip,
+    Bool,
 }
 
 fn packet_field(field: &str) -> Option<(&'static str, Kind)> {
@@ -394,6 +424,8 @@ fn packet_field(field: &str) -> Option<(&'static str, Kind)> {
         "packetLength" => ("origlen", Kind::Int),
         "frameLength" => ("caplen", Kind::Int),
         "payloadLength" => ("payload_len", Kind::Int),
+        "frameKind" => ("frame_kind", Kind::Text),
+        "encrypted" => ("encrypted", Kind::Bool),
         _ => return None,
     };
     Some(def)
@@ -420,6 +452,16 @@ fn valid_packet_value(kind: Kind, op: &str, value: &str) -> AppResult<()> {
                 value.parse::<std::net::IpAddr>().map_err(|_| {
                     AppError::msg(format!("'{value}' is not a valid IP address"))
                 })?;
+            }
+        }
+        Kind::Bool => {
+            if op == "exists" || op == "notExists" {
+                return Ok(());
+            }
+            match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" => {}
+                "false" | "0" | "no" => {}
+                _ => return Err(AppError::msg(format!("'{value}' is not true or false"))),
             }
         }
         Kind::Text => {}
@@ -485,6 +527,13 @@ fn build_packet_where(query: &PacketQuery) -> AppResult<(String, Vec<Value>)> {
                 |_| AppError::msg("expected a whole number"),
             )?)),
             ("gt" | "lt", _) => args.push(Value::Text(filter.value.clone())),
+            (_, Kind::Bool) => {
+                let flag = matches!(
+                    filter.value.trim().to_ascii_lowercase().as_str(),
+                    "true" | "1" | "yes"
+                );
+                args.push(Value::Integer(if flag { 1 } else { 0 }));
+            }
             _ => args.push(Value::Text(filter.value.clone())),
         }
     }
@@ -513,6 +562,8 @@ fn register_ip_in_cidr(conn: &Connection) {
 
 fn packet_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PacketRow> {
     Ok(PacketRow {
+        frame_kind: row.get("frame_kind")?,
+        encrypted: row.get::<_, bool>("encrypted")?,
         id: row.get("id")?,
         capture_id: row.get("capture_id")?,
         packet_no: row.get("packet_no")?,
@@ -592,7 +643,8 @@ fn unsupported_link_type(link_type: &str) -> Option<String> {
     let supported = link_type.starts_with("Ethernet")
         || link_type.starts_with("Raw IPv4")
         || link_type.starts_with("Raw IPv6")
-        || link_type.starts_with("Raw IP");
+        || link_type.starts_with("Raw IP")
+        || link_type.starts_with("IEEE 802.11");
     if supported {
         None
     } else {

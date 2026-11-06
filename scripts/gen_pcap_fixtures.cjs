@@ -302,11 +302,11 @@ written.push(["basic.pcapng", writePcapng(path.join(OUT, "basic.pcapng"), 1, bas
   written.push(["truncated.pcap", writePcap(path.join(OUT, "truncated.pcap"), 1, pkts)]);
 }
 
-// unsupported_linktype.pcap: LINKTYPE_IEEE802_11 (105) is not decoded by us.
+// unsupported_linktype.pcap: LINKTYPE_LINUX_SLL (113) is not decoded by us.
 {
   const raw = Buffer.alloc(24, 0x08);
   const pkts = [{ ts: BASE_US + 20000, data: raw }];
-  written.push(["unsupported_linktype.pcap", writePcap(path.join(OUT, "unsupported_linktype.pcap"), 105, pkts)]);
+  written.push(["unsupported_linktype.pcap", writePcap(path.join(OUT, "unsupported_linktype.pcap"), 113, pkts)]);
 }
 
 // malformed.pcap: not a capture file at all.
@@ -334,6 +334,199 @@ written.push(["basic.pcapng", writePcapng(path.join(OUT, "basic.pcapng"), 1, bas
   ];
   written.push(["vlan_ipv6.pcap", writePcap(path.join(OUT, "vlan_ipv6.pcap"), 1, pkts)]);
 }
+
+// ------------------------------------------------------- 802.11 / radiotap
+
+const WLAN_AP = "02:11:22:33:44:55";
+const WLAN_STA = "02:aa:bb:cc:dd:ee";
+const WLAN_BCAST = "ff:ff:ff:ff:ff:ff";
+const WLAN_AP_IP = "10.1.2.1";
+const WLAN_STA_IP = "10.1.2.3";
+
+function tagged(id, value) {
+  return Buffer.concat([u8(id), u8(value.length), value]);
+}
+
+function wlanDataHeader(fc, addr1, addr2, addr3, seq = 0) {
+  return Buffer.concat([
+    u16le(fc),
+    u16le(0),
+    mac(addr1),
+    mac(addr2),
+    mac(addr3),
+    u16le((seq & 0x0fff) << 4),
+  ]);
+}
+
+function wlanMgmtHeader(subtype, addr1, addr2, addr3, seq = 0) {
+  // protocol version 0, type 0 (management), subtype in bits 4-7
+  return wlanDataHeader((subtype << 4) & 0x00f0, addr1, addr2, addr3, seq);
+}
+
+function wlanControlFrame(subtype, durationUs, ra, ta) {
+  // protocol version 0, type 1 (control), subtype in bits 4-7
+  const fc = 0x0004 | ((subtype << 4) & 0x00f0);
+  const parts = [u16le(fc), u16le(durationUs), mac(ra)];
+  if (ta) parts.push(mac(ta));
+  return Buffer.concat(parts);
+}
+
+function beaconFrame(ssid, channel) {
+  const tags = Buffer.concat([
+    tagged(0, Buffer.from(ssid, "utf8")),
+    tagged(1, Buffer.from([0x82, 0x84, 0x8b, 0x96])),
+    tagged(3, Buffer.from([channel])),
+    tagged(48, Buffer.from([0x01, 0x00, 0x00, 0x0f])),
+  ]);
+  const fixed = Buffer.concat([u64le(0), u16le(100), u16le(0x0431)]);
+  return Buffer.concat([
+    wlanMgmtHeader(8, WLAN_BCAST, WLAN_AP, WLAN_AP),
+    fixed,
+    tags,
+  ]);
+}
+
+function probeRequestFrame(ssid) {
+  const tags = Buffer.concat([
+    tagged(0, Buffer.from(ssid, "utf8")),
+    tagged(1, Buffer.from([0x82, 0x84, 0x8b, 0x96])),
+  ]);
+  return Buffer.concat([wlanMgmtHeader(4, WLAN_BCAST, WLAN_STA, WLAN_BCAST), tags]);
+}
+
+function snapPacket(ethertype, inner) {
+  return Buffer.concat([Buffer.from([0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00]), u16be(ethertype), inner]);
+}
+
+function radiotapHeader({ flags = 0, rate = 2, freq = 2412, chFlags = 0x00a0, signal = -42 } = {}) {
+  const present = u32le((1 << 1) | (1 << 2) | (1 << 3) | (1 << 5));
+  const fields = Buffer.from([
+    flags & 0xff,
+    rate & 0xff,
+    freq & 0xff,
+    (freq >> 8) & 0xff,
+    chFlags & 0xff,
+    (chFlags >> 8) & 0xff,
+    signal & 0xff,
+  ]);
+  const header = Buffer.alloc(8);
+  header[0] = 0; // version
+  header[1] = 0; // pad
+  header.writeUInt16LE(8 + fields.length, 2);
+  present.copy(header, 4);
+  return Buffer.concat([header, fields]);
+}
+
+const wifiFrames = [];
+{
+  // 1: management beacon
+  wifiFrames.push({ ts: BASE_US + 0, data: beaconFrame("NULLPLINTH-AP", 6) });
+  // 2: management probe request
+  wifiFrames.push({ ts: BASE_US + 1000, data: probeRequestFrame("NULLPLINTH-AP") });
+  // 3: control RTS
+  wifiFrames.push({ ts: BASE_US + 2000, data: wlanControlFrame(11, 44, WLAN_AP, WLAN_STA) });
+  // 4: control ACK
+  wifiFrames.push({ ts: BASE_US + 3000, data: wlanControlFrame(13, 0, WLAN_STA) });
+  // 5: data ToDS (station to AP), LLC/SNAP + IPv4/TCP SYN to port 80
+  const tcpSyn = snapPacket(
+    0x0800,
+    ipv4Packet({
+      src: WLAN_STA_IP,
+      dst: SERVER_IP,
+      proto: 6,
+      id: 0x0a01,
+      payload: tcp({ sport: 51234, dport: 80, seq: 3000, ack: 0, flags: 0x02 }),
+    })
+  );
+  wifiFrames.push({
+    ts: BASE_US + 4000,
+    data: Buffer.concat([wlanDataHeader(0x0108, WLAN_AP, WLAN_STA, SERVER_MAC, 1), tcpSyn]),
+  });
+  // 6: data FromDS (AP to station), LLC/SNAP + IPv4/UDP DNS response
+  const dnsResponse = snapPacket(
+    0x0800,
+    ipv4Packet({
+      src: DNS_IP,
+      dst: WLAN_STA_IP,
+      proto: 17,
+      id: 0x0a02,
+      payload: udp({
+        sport: 53,
+        dport: 53000,
+        payload: dnsMessage({
+          id: 0x4321,
+          flags: 0x8180,
+          qname: "example.com",
+          qtype: 1,
+          answers: [{ type: 1, class: 1, ttl: 300, rdata: ipv4(SERVER_IP) }],
+        }),
+      }),
+    })
+  );
+  wifiFrames.push({
+    ts: BASE_US + 5000,
+    data: Buffer.concat([wlanDataHeader(0x0208, WLAN_STA, WLAN_AP, "02:00:00:00:00:99", 2), dnsResponse]),
+  });
+  // 7: protected data frame (flag 0x40) - payload must never be decoded
+  const encryptedPayload = Buffer.alloc(32, 0x5a);
+  wifiFrames.push({
+    ts: BASE_US + 6000,
+    data: Buffer.concat([wlanDataHeader(0x4108, WLAN_AP, WLAN_STA, WLAN_AP, 3), encryptedPayload]),
+  });
+  // 8: data ToDS with LLC/SNAP + IPv4/TCP HTTP GET
+  const httpFrame = snapPacket(
+    0x0800,
+    ipv4Packet({
+      src: WLAN_STA_IP,
+      dst: SERVER_IP,
+      proto: 6,
+      id: 0x0a03,
+      payload: tcp({ sport: 51235, dport: 80, seq: 4000, ack: 1, flags: 0x18, payload: httpPayload }),
+    })
+  );
+  wifiFrames.push({
+    ts: BASE_US + 7000,
+    data: Buffer.concat([wlanDataHeader(0x0108, WLAN_AP, WLAN_STA, SERVER_MAC, 4), httpFrame]),
+  });
+  // 9: truncated data frame: only 20 of the 24 header bytes captured
+  const truncatedData = Buffer.concat([
+    wlanDataHeader(0x0108, WLAN_AP, WLAN_STA, SERVER_MAC, 5),
+    snapPacket(0x0800, ipv4Packet({ src: WLAN_STA_IP, dst: SERVER_IP, proto: 6, id: 0x0a04, payload: tcp({ sport: 51236, dport: 80, flags: 0x02 }) })),
+  ]);
+  wifiFrames.push({ ts: BASE_US + 8000, data: truncatedData, caplen: 20, origlen: truncatedData.length });
+  // 10: malformed frame: reserved 802.11 type 3
+  wifiFrames.push({ ts: BASE_US + 9000, data: Buffer.from([0x0c, 0x00, 0x00, 0x00]) });
+}
+written.push(["wifi_80211.pcap", writePcap(path.join(OUT, "wifi_80211.pcap"), 105, wifiFrames)]);
+
+const radiotapFrames = [];
+radiotapFrames.push({ ts: BASE_US + 0, data: Buffer.concat([radiotapHeader(), beaconFrame("NULLPLINTH-AP", 6)]) });
+radiotapFrames.push({
+  ts: BASE_US + 1000,
+  data: Buffer.concat([
+    radiotapHeader(),
+    wlanDataHeader(0x0108, WLAN_AP, WLAN_STA, SERVER_MAC, 7),
+    snapPacket(
+      0x0800,
+      ipv4Packet({
+        src: WLAN_STA_IP,
+        dst: SERVER_IP,
+        proto: 6,
+        id: 0x0b01,
+        payload: tcp({ sport: 51240, dport: 443, seq: 5000, flags: 0x02 }),
+      })
+    ),
+  ]),
+});
+radiotapFrames.push({
+  ts: BASE_US + 2000,
+  data: Buffer.concat([
+    radiotapHeader({ signal: -60 }),
+    wlanDataHeader(0x4108, WLAN_AP, WLAN_STA, WLAN_AP, 8),
+    Buffer.alloc(24, 0x33),
+  ]),
+});
+written.push(["wifi_radiotap.pcap", writePcap(path.join(OUT, "wifi_radiotap.pcap"), 127, radiotapFrames)]);
 
 for (const [name, size] of written) console.log(name.padEnd(28), size, "bytes");
 console.log("wrote fixtures to", OUT);

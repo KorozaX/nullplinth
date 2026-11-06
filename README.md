@@ -8,6 +8,15 @@ inspect, detect, and investigate - entirely offline, on your own machine.
 
 Nothing is uploaded. There is no cloud backend, no telemetry, no account, and no external API.
 
+## Download
+
+Get the Windows installer from the [releases page](https://github.com/KorozaX/nullplinth/releases/latest):
+
+- `NULLPLINTH_0.2.0_x64-setup.exe` - per-user install, no administrator rights required.
+- The installer is not code signed, so Windows SmartScreen will ask for confirmation.
+- The app runs fully offline; the only prerequisite is the WebView2 runtime, which ships with
+  Windows 10 and 11.
+
 ## What it does
 
 | Area | Capability |

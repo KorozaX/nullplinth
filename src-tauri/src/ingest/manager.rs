@@ -41,11 +41,22 @@ pub fn import_with_progress(
     let format = match options.source_type.as_deref() {
         Some(raw) if !raw.trim().is_empty() => Format::from_source_type(raw).ok_or_else(|| {
             AppError::msg(format!(
-                "unknown source type '{raw}' (expected json, ndjson, suricata, zeek or csv)"
+                "unknown source type '{raw}' (expected json, ndjson, suricata, zeek, csv, linux_auth, syslog, web_access, firewall or generic_text)"
             ))
         })?,
         _ => detect::detect(&path)?,
     };
+    match format {
+        Format::Pcap | Format::PcapNg => {
+            return Err(AppError::msg(
+                "packet captures are imported through the capture importer, not the log importer",
+            ))
+        }
+        Format::Binary => {
+            return Err(AppError::msg("binary file: not a supported log format"))
+        }
+        _ => {}
+    }
     if format == Format::Csv && options.csv.is_none() {
         return Err(AppError::msg(
             "CSV imports need an explicit column mapping; call preview_csv first",

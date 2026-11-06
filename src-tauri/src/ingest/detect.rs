@@ -5,7 +5,7 @@
 
 use crate::error::{AppError, AppResult};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 pub const MAX_SAMPLE_LINES: usize = 300;
@@ -32,6 +32,12 @@ pub enum Format {
     Firewall,
     /// Unknown text: one event per line, no invented fields.
     GenericText,
+    /// Classic libpcap capture (any endianness / timestamp resolution).
+    Pcap,
+    /// PCAPNG capture.
+    PcapNg,
+    /// Binary file that is neither a known log nor a capture.
+    Binary,
 }
 
 impl Format {
@@ -47,6 +53,9 @@ impl Format {
             Format::WebAccess => "web_access",
             Format::Firewall => "firewall",
             Format::GenericText => "generic_text",
+            Format::Pcap => "pcap",
+            Format::PcapNg => "pcapng",
+            Format::Binary => "binary",
         }
     }
 
@@ -62,6 +71,9 @@ impl Format {
             Format::WebAccess => "Web access log (Apache/Nginx)",
             Format::Firewall => "Firewall key=value log",
             Format::GenericText => "Generic text log",
+            Format::Pcap => "PCAP packet capture",
+            Format::PcapNg => "PCAPNG packet capture",
+            Format::Binary => "Binary file",
         }
     }
 
@@ -88,6 +100,9 @@ impl Format {
                 Some(Format::Firewall)
             }
             "generictext" | "text" | "plain" | "log" | "other" => Some(Format::GenericText),
+            "pcap" => Some(Format::Pcap),
+            "pcapng" => Some(Format::PcapNg),
+            "binary" => Some(Format::Binary),
             _ => None,
         }
     }
@@ -102,13 +117,77 @@ pub struct Detection {
     pub warnings: Vec<String>,
 }
 
+fn read_head(path: &Path, limit: usize) -> AppResult<Vec<u8>> {
+    let file = File::open(path)
+        .map_err(|e| AppError::msg(format!("cannot open {}: {e}", path.display())))?;
+    let mut reader = BufReader::new(file);
+    let mut head: Vec<u8> = Vec::with_capacity(limit);
+    let mut chunk = [0u8; 4096];
+    while head.len() < limit {
+        let want = (limit - head.len()).min(chunk.len());
+        let read = reader.read(&mut chunk[..want])?;
+        if read == 0 {
+            break;
+        }
+        head.extend_from_slice(&chunk[..read]);
+    }
+    Ok(head)
+}
+
+/// Recognise packet-capture magic numbers before any UTF-8 decoding happens.
+/// Classic pcap: little endian d4c3b2a1, big endian a1b2c3d4 and the
+/// nanosecond variants 4d3cb2a1 / a1b23c4d. PCAPNG: 0a0d0d0a.
+pub(crate) fn capture_format(head: &[u8]) -> Option<Format> {
+    if head.len() < 4 {
+        return None;
+    }
+    match &head[..4] {
+        [0xd4, 0xc3, 0xb2, 0xa1]
+        | [0xa1, 0xb2, 0xc3, 0xd4]
+        | [0x4d, 0x3c, 0xb2, 0xa1]
+        | [0xa1, 0xb2, 0x3c, 0x4d] => Some(Format::Pcap),
+        [0x0a, 0x0d, 0x0d, 0x0a] => Some(Format::PcapNg),
+        _ => None,
+    }
+}
+
+/// Cheap text/binary test on the sniffed head bytes. Never fails: invalid UTF-8
+/// with NUL bytes or many replacement characters is treated as binary.
+fn looks_text(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+    if bytes.contains(&0u8) {
+        return false;
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        Err(error) => {
+            if error.error_len().is_none() {
+                // Truncated multi-byte character at the end of the sniff window.
+                return true;
+            }
+            let lossy = String::from_utf8_lossy(bytes);
+            let replacements = lossy.chars().filter(|ch| *ch == '\u{FFFD}').count();
+            let total = lossy.chars().count().max(1);
+            replacements * 100 < total * 2
+        }
+    }
+}
+
 fn read_sample_lines(path: &Path) -> AppResult<Vec<String>> {
     let file = File::open(path)
         .map_err(|e| AppError::msg(format!("cannot open {}: {e}", path.display())))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut samples: Vec<String> = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
+    let mut buffer: Vec<u8> = Vec::new();
+    loop {
+        buffer.clear();
+        let read = reader.read_until(b'\n', &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let line = String::from_utf8_lossy(&buffer);
         let cleaned = super::normalize::strip_bom(&line).trim_end();
         if cleaned.trim().is_empty() {
             continue;
@@ -124,11 +203,17 @@ fn read_sample_lines(path: &Path) -> AppResult<Vec<String>> {
 fn non_empty_line_count(path: &Path) -> AppResult<(i64, i64)> {
     let file = File::open(path)
         .map_err(|e| AppError::msg(format!("cannot open {}: {e}", path.display())))?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
     let mut lines = 0i64;
     let mut hash_lines = 0i64;
-    for line in reader.lines() {
-        let line = line?;
+    let mut buffer: Vec<u8> = Vec::new();
+    loop {
+        buffer.clear();
+        let read = reader.read_until(b'\n', &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let line = String::from_utf8_lossy(&buffer);
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -159,6 +244,9 @@ fn priority(format: Format) -> u8 {
         Format::Syslog => 7,
         Format::Csv => 8,
         Format::GenericText => 9,
+        Format::Pcap => 10,
+        Format::PcapNg => 11,
+        Format::Binary => 12,
     }
 }
 
@@ -330,6 +418,31 @@ pub fn detect_full(path: &Path) -> AppResult<Detection> {
             "file does not exist or is not a file: {}",
             path.display()
         )));
+    }
+    let head = read_head(path, 4096)?;
+    if let Some(format) = capture_format(&head) {
+        return Ok(Detection {
+            format,
+            confidence: "high".to_string(),
+            sample_lines: Vec::new(),
+            estimated_records: None,
+            warnings: Vec::new(),
+        });
+    }
+    if head.is_empty() {
+        return Err(AppError::msg(format!(
+            "cannot detect log format of empty file: {}",
+            path.display()
+        )));
+    }
+    if !looks_text(&head) {
+        return Ok(Detection {
+            format: Format::Binary,
+            confidence: "low".to_string(),
+            sample_lines: Vec::new(),
+            estimated_records: None,
+            warnings: vec!["binary file: not a recognised log or capture".to_string()],
+        });
     }
     let samples = read_sample_lines(path)?;
     if samples.is_empty() {

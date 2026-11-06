@@ -110,5 +110,9 @@ pub(crate) fn stream_records(
         Format::WebAccess => web_access::stream(path, &mut wrapper),
         Format::Firewall => firewall::stream(path, &mut wrapper),
         Format::GenericText => generic_text::stream(path, &mut wrapper),
+        Format::Pcap | Format::PcapNg => Err(AppError::msg(
+            "packet captures are imported through the capture importer, not the log importer",
+        )),
+        Format::Binary => Err(AppError::msg("binary file: not a supported log format")),
     }
 }

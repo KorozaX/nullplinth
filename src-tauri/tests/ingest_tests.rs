@@ -1123,3 +1123,130 @@ fn real_example_files_import_correctly() {
     // EventID / LogonType / Status stay in attrs instead of being dropped
     assert_eq!(rows[0].attrs.get("EventID").and_then(|value| value.as_str()), Some("4672"));
 }
+
+// ------------------------------- task-13: capture / binary preview
+
+#[test]
+fn preview_import_recognises_pcap_magic_without_utf8_error() {
+    for name in [
+        "capture_le.pcap",
+        "capture_be.pcap",
+        "capture_ns.pcap",
+        "capture_ns_be.pcap",
+    ] {
+        let preview = ingest::preview_import(&fixture_path(name))
+            .unwrap_or_else(|error| panic!("preview must not fail for {name}: {error}"));
+        assert_eq!(preview.format, "pcap", "{name}");
+        assert_eq!(preview.format_label, "PCAP packet capture", "{name}");
+        assert_eq!(preview.confidence, "high", "{name}");
+        assert!(preview.sample_lines.is_empty(), "{name}");
+        assert_eq!(preview.estimated_records, None, "{name}");
+        assert!(preview.warnings.is_empty(), "{name}");
+        assert_eq!(
+            ingest::detect_format(&fixture_path(name)).unwrap(),
+            Format::Pcap,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn preview_import_recognises_pcapng_magic() {
+    let preview = ingest::preview_import(&fixture_path("capture.pcapng")).expect("pcapng preview");
+    assert_eq!(preview.format, "pcapng");
+    assert_eq!(preview.format_label, "PCAPNG packet capture");
+    assert_eq!(preview.confidence, "high");
+    assert!(preview.sample_lines.is_empty());
+    assert_eq!(preview.estimated_records, None);
+    assert!(preview.warnings.is_empty());
+    assert_eq!(
+        ingest::detect_format(&fixture_path("capture.pcapng")).unwrap(),
+        Format::PcapNg
+    );
+}
+
+#[test]
+fn preview_import_returns_binary_preview_instead_of_erroring() {
+    for name in ["binary_magicless.bin", "binary_with_nul.bin"] {
+        let preview = ingest::preview_import(&fixture_path(name))
+            .unwrap_or_else(|error| panic!("binary preview must not fail for {name}: {error}"));
+        assert_eq!(preview.format, "binary", "{name}");
+        assert_eq!(preview.confidence, "low", "{name}");
+        assert!(preview.sample_lines.is_empty(), "{name}");
+        assert!(!preview.warnings.is_empty(), "{name}");
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("binary")),
+            "{name}: {:?}",
+            preview.warnings
+        );
+    }
+
+    // text files still take the text path
+    let text = ingest::preview_import(&fixture_path("generic_text.log")).expect("text preview");
+    assert_eq!(text.format, "generic_text");
+    assert!(!text.sample_lines.is_empty());
+}
+
+#[test]
+fn capture_files_are_not_routed_through_the_text_import_manager() {
+    let temp = TempDb::new();
+    let options = ImportOptions {
+        path: fixture_path("capture_le.pcap"),
+        name: Some("capture".to_string()),
+        source_type: None,
+        csv: None,
+    };
+    let error = ingest::import_with_progress(&temp.db, &options, &mut |_progress| {})
+        .expect_err("log importer must reject packet captures");
+    assert!(
+        error.to_string().contains("capture"),
+        "unexpected error: {error}"
+    );
+    let datasets = db::list_datasets(&temp.db.conn().expect("connection")).expect("datasets");
+    assert!(
+        datasets.is_empty(),
+        "no dataset row may be created for a capture"
+    );
+}
+
+#[test]
+fn real_example_pcaps_preview_as_captures() {
+    let Some(dir) = example_files_dir() else {
+        eprintln!("Example Files directory not present; skipping real pcap test");
+        return;
+    };
+    let mut checked = 0usize;
+    for entry in std::fs::read_dir(&dir).expect("read Example Files") {
+        let path = entry.expect("directory entry").path();
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if extension != "pcap" && extension != "pcapng" {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("")
+            .to_string();
+        let preview = ingest::preview_import(&path.to_string_lossy())
+            .unwrap_or_else(|error| panic!("preview failed for {name}: {error}"));
+        assert!(
+            preview.format == "pcap" || preview.format == "pcapng",
+            "{name} detected as {}",
+            preview.format
+        );
+        assert_eq!(preview.confidence, "high", "{name}");
+        assert!(preview.sample_lines.is_empty(), "{name}");
+        checked += 1;
+    }
+    assert!(
+        checked >= 2,
+        "expected at least the two example captures, found {checked}"
+    );
+}

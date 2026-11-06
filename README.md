@@ -12,13 +12,14 @@ Nothing is uploaded. There is no cloud backend, no telemetry, no account, and no
 
 | Area | Capability |
 |------|------------|
-| Ingestion | JSON, NDJSON, Suricata EVE JSON, Zeek TSV logs, CSV (with a mapping wizard) |
+| Ingestion | Content-based detection: Suricata EVE JSON, Zeek TSV, JSON/NDJSON, CSV mapping wizard, Linux auth logs, syslog, Apache/Nginx access logs, firewall key=value logs, generic text fallback |
 | Storage | SQLite with indexed columns and FTS5 full-text search |
 | Event Explorer | Guided filter builder, time ranges, sorting, pagination, raw record inspection |
-| Network Analyzer | Offline PCAP/PCAPNG import, Ethernet/IPv4/IPv6/TCP/UDP decoding, DNS and HTTP/TLS metadata, packet hex view, TCP/UDP conversations |
+| Network Analyzer | Offline PCAP/PCAPNG import, Ethernet and IEEE 802.11 (plus radiotap) decoding, IPv4/IPv6/TCP/UDP/ICMP/DNS/HTTP/TLS, packet hex view, TCP/UDP conversations, encrypted-frame labelling |
 | Detection | Four deterministic rules with configurable thresholds and evidence links |
 | Investigations | Incident records with notes, attached alerts, statuses and export |
 | Two modes | Beginner mode (guided, plain language) and Analyst mode (dense, technical) |
+| Workspace | Startup choice between resuming the previous workspace and starting fresh, with confirmation and optional backup |
 
 ## Stack
 
@@ -32,6 +33,7 @@ Nothing is uploaded. There is no cloud backend, no telemetry, no account, and no
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - modules, data flow, contracts
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - how to use every screen
+- [docs/IMPORT_FORMATS.md](docs/IMPORT_FORMATS.md) - every accepted format and how it is detected
 - [docs/DECISIONS.md](docs/DECISIONS.md) - why the stack and shapes were chosen
 - [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) - honest V1 boundaries
 - [docs/TEST_DATASETS.md](docs/TEST_DATASETS.md) - external datasets you can test with

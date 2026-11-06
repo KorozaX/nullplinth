@@ -243,3 +243,72 @@ fn provided_wireless_capture_decodes_in_full() {
     let stats = nullplinth_lib::workspace::state(&conn).unwrap();
     assert_eq!(stats.packets, 426_642);
 }
+#[test]
+fn username_equality_search_finds_real_rows() {
+    let Some(dir) = examples_dir() else { return };
+    let db = temp_db("user-search");
+    // firewall.log carries 27 user=root rows.
+    import(&db, &dir.join("firewall.log"), None, None);
+    // windows_event.csv carries root rows through the suggested mapping.
+    let csv_path = dir.join("windows_event.csv");
+    let preview = ingest::preview_csv(&csv_path.to_string_lossy()).unwrap();
+    let mut column_map: HashMap<String, String> = HashMap::new();
+    for (field, column) in &preview.suggested_mapping {
+        if field != "timestamp" {
+            column_map.insert(field.clone(), column.clone());
+        }
+    }
+    let mapping = CsvMapping {
+        delimiter: preview.detected_delimiter.clone(),
+        has_header: true,
+        timestamp_column: preview.suggested_mapping.get("timestamp").cloned(),
+        timestamp_format: None,
+        column_map,
+    };
+    import(&db, &csv_path, Some("csv"), Some(mapping));
+
+    let conn = db.conn().unwrap();
+    let mut q = EventQuery { page_size: 100, ..Default::default() };
+    q.filters = vec![FilterRow { field: "username".into(), op: "eq".into(), value: "root".into() }];
+    let page = query::query_events(&conn, &q).unwrap();
+    eprintln!("SEARCH username eq root -> total={}", page.total);
+    for e in page.events.iter().take(5) {
+        eprintln!("  {} {} user={:?} src={:?} action={:?}", e.id, e.ts, e.username, e.src_ip, e.action);
+    }
+    assert!(page.total > 0, "username equality search must find root");
+
+    // Also verify what is actually stored per dataset.
+    let rows: Vec<(String, i64)> = {
+        let mut stmt = conn
+            .prepare("SELECT ifnull(username,'<null>'), COUNT(*) c FROM events GROUP BY 1 ORDER BY c DESC LIMIT 8")
+            .unwrap();
+        let it = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).unwrap();
+        it.map(|r| r.unwrap()).collect()
+    };
+    eprintln!("username distribution: {rows:?}");
+
+    // Case sensitivity check.
+    // Text filtering is case-insensitive: "ROOT" must find "root".
+    let mut q2 = EventQuery { page_size: 10, ..Default::default() };
+    q2.filters = vec![FilterRow { field: "username".into(), op: "eq".into(), value: "ROOT".into() }];
+    let upper = query::query_events(&conn, &q2).unwrap().total;
+    eprintln!("SEARCH username eq ROOT -> total={upper}");
+    assert_eq!(upper, page.total, "username search must be case-insensitive");
+    // contains is also case-insensitive and matches a prefix of the value.
+    let mut q3 = EventQuery { page_size: 10, ..Default::default() };
+    q3.filters = vec![FilterRow { field: "username".into(), op: "contains".into(), value: "ROO".into() }];
+    assert!(query::query_events(&conn, &q3).unwrap().total > 0);
+}
+#[test]
+fn preview_import_recognises_packet_captures() {
+    let Some(dir) = examples_dir() else { return };
+    for name in ["2026-02-28-traffic-analysis-exercise.pcap", "evidence-defcon2010.pcap"] {
+        let path = dir.join(name);
+        if !path.is_file() { continue; }
+        let preview = ingest::preview_import(&path.to_string_lossy());
+        match preview {
+            Ok(p) => eprintln!("PREVIEW {name}: format={} label={} confidence={}", p.format, p.format_label, p.confidence),
+            Err(e) => eprintln!("PREVIEW {name}: ERROR {e}"),
+        }
+    }
+}

@@ -11,6 +11,20 @@ in `%APPDATA%\com.nullplinth.app\` until you delete it.
 
 ## First run
 
+On every launch NULLPLINTH shows a short welcome screen when a workspace already contains data:
+
+- **Welcome back to NULLPLINTH.** - "How would you like to start your next session?"
+- **Resume** - continue with the datasets, captures, alerts and investigations already stored on
+  this machine.
+- **Start Fresh** - clear the imported datasets, captures, packets, conversations, alerts,
+  investigations and notes from the local workspace. You are asked to confirm first, and you can
+  save a backup copy of the database. Original files on disk are never touched.
+
+Tick "Do not ask again, resume automatically" to skip the dialog in future. The preference is
+also editable in **Settings**, together with a **Clear workspace** action that always asks for
+confirmation. Application settings, the Beginner/Analyst preference and the app version are
+preserved.
+
 The Overview screen is empty until you import something. Two ways to start:
 
 - **Load demo dataset** - a small, clearly labelled synthetic dataset that exercises every
@@ -24,9 +38,10 @@ Everything runs offline. The application never contacts a network.
 Supported formats: JSON arrays, newline-delimited JSON, Suricata EVE JSON, Zeek TSV logs
 (`conn`, `dns`, `http`, `ssl`, `ssh`) and CSV.
 
-1. Open **Data Sources** and choose **Import data**, or use **Import data** on the Overview.
-2. Pick a file. The importer detects the format automatically; if detection is ambiguous you
-   can force the format.
+1. Open **Data Sources** and choose **Import data**, or use **Import data** on the Overview, or
+   drag files from Windows Explorer straight into the window (one or many at once).
+2. The importer reads the content and shows what it detected: format, confidence, record
+   estimate, sample lines and any warnings. Confirm to import, or cancel.
 3. For CSV files the wizard opens: preview the rows, confirm the delimiter and header row,
    then map columns to normalized fields. The timestamp column and format are required; every
    other field is optional. Unmapped columns are preserved in each event's attributes.
@@ -68,6 +83,9 @@ set to CSV or JSON.
 4. The **Conversations** view groups packets into bidirectional flows with packet and byte
    counts, first and last seen times, and duration. Selecting a flow filters the packet list.
 
+Protocol chips are colour coded (TCP blue, UDP violet, DNS cyan, HTTP green, TLS lavender,
+ICMP amber). Wireless frames carry a frame-kind badge (management/control/data) and protected
+frames carry an encrypted badge: their payload is not decoded and no addresses are invented.
 Unsupported link types and truncated frames are kept and labelled; the raw bytes stay
 inspectable. TLS is never decrypted.
 

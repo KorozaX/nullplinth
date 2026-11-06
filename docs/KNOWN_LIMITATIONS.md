@@ -22,15 +22,26 @@ pretend to cover ground it does not.
 
 - **Import cancellation** is not implemented. Progress is reported live and imports are
   batched, but a running import cannot be aborted from the UI.
-- **Drag and drop import** is not implemented; files are chosen through the native dialog.
-- **Packet link types**: Ethernet (with 802.1Q VLAN) is decoded. Other link types are stored as
-  raw bytes and labelled unsupported.
+- **Drag and drop** uses the native Tauri file-drop event and is covered by component tests with
+  a mocked webview; it is the one workflow that needs a human hand to confirm on each Windows
+  build (the automated harness cannot synthesise a real Explorer drag).
+- **Workspace clearing** deletes imported representations and derived analysis, never the original
+  files on disk. A backup copy of the database can be written first.
+- **Packet link types**: Ethernet (with 802.1Q VLAN), IEEE 802.11 (link type 105) and radiotap
+  (127) are decoded. Other link types are stored as raw bytes and labelled unsupported.
+- **Encrypted wireless traffic**: protected 802.11 frames keep their wireless metadata and raw
+  bytes but their payload cannot be decoded, and the app says so instead of inventing endpoints.
+  A capture of an entirely WPA2-protected network therefore shows no IP addresses; that is the
+  honest result, not a decoding failure.
+- **Packet counts in large captures**: importing a multi-hundred-megabyte capture takes tens of
+  seconds (426,642 packets from a 65 MB capture in about 40 s on the reference machine) and the
+  packet table is paginated.
 - **Protocol coverage**: Ethernet, IPv4, IPv6, TCP, UDP, ICMP/ICMPv6, ARP, DNS, cleartext HTTP
   and TLS record/handshake metadata. Everything else shows as the undecoded remainder.
 - **Zeek formats**: the common TSV logs (`conn`, `dns`, `http`, `ssl`, `ssh`) are supported.
   Other Zeek logs import as generic tabular records at best.
-- **CSV import** requires explicit column mapping; there is no automatic semantic mapping of
-  arbitrary headers.
+- **CSV import** pre-fills a mapping from common header aliases, but a file with completely
+  unrecognisable headers still needs manual mapping. Unmapped columns are preserved.
 - **Detection** is heuristic. Thresholds are global, not per-host baselines, so a noisy
   environment can hide activity below the threshold and a quiet one can produce noise.
 - **Search** is bounded to 100,000 rows per export and 500 rows per page.

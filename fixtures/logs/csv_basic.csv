@@ -1,0 +1,4 @@
+timestamp,src_ip,dst_ip,src_port,dst_port,proto,action,username,severity,message,extra_note
+2024-03-01T10:00:00Z,10.1.1.5,10.2.2.9,12345,443,tcp,allowed,alice,info,login ok,note-a
+2024-03-01T10:05:00Z,10.1.1.6,10.2.2.9,12346,443,tcp,blocked,bob,warning,login failed,note-b
+2024-03-01T10:10:00Z,bad-ip,10.2.2.9,99999,443,tcp,allowed,carol,high,weird values,note-c

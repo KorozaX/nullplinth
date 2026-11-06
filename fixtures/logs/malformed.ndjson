@@ -1,0 +1,4 @@
+{"ts":1709287200,"message":"good one","src_ip":"10.1.1.5"}
+this is not json
+{"message":"missing timestamp"}
+{"ts":1709287202,"message":"good two","src_ip":"10.1.1.6"}

@@ -1,0 +1,2 @@
+{"ts":1709287201,"src_ip":"10.1.1.7","dst_ip":"10.2.2.8","src_port":2222,"dst_port":22,"proto":"tcp","type":"audit","message":"ndjson one"}
+{"ts":1709287202,"src_ip":"10.1.1.8","dst_ip":"10.2.2.8","src_port":3333,"dst_port":443,"proto":"udp","type":"audit","message":"ndjson two"}

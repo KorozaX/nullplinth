@@ -1,0 +1,4 @@
+{"timestamp":"2024-03-01T10:00:00.000000+0000","event_type":"alert","src_ip":"192.0.2.50","dest_ip":"198.51.100.5","proto":"TCP","alert":{"signature":"ET TEST alert","severity":2}}
+{"event_type":"dns","src_ip":"192.0.2.50","proto":"UDP","dns":{"type":"query","rrname":"no-ts.example.com","rcode":"NOERROR"}}
+"not an object"
+{"timestamp":"2024-03-01T10:00:01.000000+0000","event_type":"dns","src_ip":"192.0.2.50","src_port":5353,"dest_ip":"192.0.2.1","dest_port":53,"proto":"UDP","dns":{"type":"query","rrname":"numeric-rcode.example.com","rcode":"3"}}

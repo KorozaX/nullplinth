@@ -1,0 +1,27 @@
+[
+  {
+    "ts": 1709287200,
+    "src_ip": "10.1.1.5",
+    "dst_ip": "10.2.2.9",
+    "src_port": 12345,
+    "dst_port": 80,
+    "proto": "tcp",
+    "event_type": "connection",
+    "category": "network",
+    "action": "allowed",
+    "severity": "info",
+    "message": "sample connection",
+    "custom_field": "keep-me"
+  },
+  {
+    "timestamp": "2024-03-01T12:00:00Z",
+    "source_ip": "10.1.1.6",
+    "destination_ip": "10.2.2.9",
+    "event_type": "logon",
+    "category": "authentication",
+    "action": "failed",
+    "username": "alice",
+    "severity": "medium",
+    "process_name": "sshd"
+  }
+]

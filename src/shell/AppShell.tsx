@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 
 import { useMode } from "../context/ModeContext";
 import { MODE_OPTIONS } from "../lib/mode";
@@ -32,8 +34,46 @@ export interface AppShellProps {
   children: ReactNode;
 }
 
+function tauriWindow() {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return null;
+  return import("@tauri-apps/api/window").then((m) => m.getCurrentWindow());
+}
+
+async function toggleFullscreen(): Promise<boolean> {
+  const win = await tauriWindow();
+  if (!win) return false;
+  const next = !(await win.isFullscreen());
+  await win.setFullscreen(next);
+  return next;
+}
+
 export function AppShell({ section, onSelect, children }: AppShellProps) {
   const current = sectionById(section);
+  const { mode, setMode } = useMode();
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // Analyst-mode shortcuts: F11 fullscreen, Alt+1..7 jump to a section, Alt+M switches mode.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "F11") {
+        event.preventDefault();
+        void toggleFullscreen().then(setFullscreen);
+        return;
+      }
+      if (!event.altKey || event.ctrlKey || event.metaKey) return;
+      const index = Number(event.key);
+      if (index >= 1 && index <= SECTIONS.length) {
+        event.preventDefault();
+        onSelect(SECTIONS[index - 1].id);
+      } else if (event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        setMode(mode === "analyst" ? "beginner" : "analyst");
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mode, onSelect, setMode]);
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -73,6 +113,7 @@ export function AppShell({ section, onSelect, children }: AppShellProps) {
           <strong>Local only</strong>
           <span>No network access</span>
           <span>v0.1.0</span>
+          <span className="sidebar__hint">Alt+1..7 sections &middot; Alt+M mode &middot; F11 fullscreen</span>
         </div>
       </aside>
 
@@ -82,7 +123,18 @@ export function AppShell({ section, onSelect, children }: AppShellProps) {
             <h1 className="topbar__title">{current.label}</h1>
             <p className="topbar__desc">{current.description}</p>
           </div>
-          <ModeToggle />
+          <div className="topbar__actions">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={fullscreen ? "Exit fullscreen (F11)" : "Enter fullscreen (F11)"}
+              title={fullscreen ? "Exit fullscreen (F11)" : "Enter fullscreen (F11)"}
+              onClick={() => void toggleFullscreen().then(setFullscreen)}
+            >
+              {fullscreen ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+            </button>
+            <ModeToggle />
+          </div>
         </header>
         <main className="content" id="main-content" tabIndex={-1}>
           {children}

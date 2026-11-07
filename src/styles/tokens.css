@@ -1,104 +1,178 @@
-/* NULLPLINTH design tokens: industrial technical brutalism, dark only.
-   Single source of truth for every semantic colour. */
+/* NULLPLINTH design tokens - single source of truth.
+   Premium industrial minimalism: black surfaces, off-white type, coral/lime/orange
+   signal colours and a restrained analytical palette. Every component reads these
+   variables; do not hardcode hex values anywhere else. */
+
+@font-face {
+  font-family: "Urbanist";
+  src: url("../assets/fonts/Urbanist-Variable.ttf") format("truetype-variations"),
+       url("../assets/fonts/Urbanist-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
 
-  /* Core surfaces: near-black background, dark slate surfaces */
-  --bg: #0a0c0f;
-  --bg-deep: #07090c;
-  --surface: #0f1318;
-  --surface-raised: #141a21;
-  --surface-hover: #19212a;
-  --surface-active: #1e2833;
+  /* ---------- surfaces ---------- */
+  --bg: #000000;
+  --surface-1: #141414;
+  --surface-2: #1c1c1c;
+  --surface-3: #242424;
+  --surface-inset: #0b0b0b;
+  --surface-hover: #1f1f1f;
+  --scrim: rgba(0, 0, 0, 0.72);
 
-  /* 1px hairlines */
-  --line-faint: #172029;
-  --line: #22303c;
-  --line-strong: #2f4354;
+  /* ---------- borders ---------- */
+  --line: #303030;
+  --line-strong: #3d3d3d;
+  --line-soft: #212121;
   --border: 1px solid var(--line);
+  --border-soft: 1px solid var(--line-soft);
 
-  /* Text */
-  --fg: #e6edf3;
-  --fg-secondary: #afbdca;
-  --fg-muted: #7d8c9b;
-  --fg-dim: #5a6a78;
-  --fg-bright: #f4f2ec;
+  /* ---------- type ---------- */
+  --font-ui: "Urbanist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", "SF Mono", ui-monospace, monospace;
 
-  /* Primary accent: electric cyan */
-  --accent: #3fc6f0;
-  --accent-strong: #74e0ff;
-  --accent-wash: rgba(63, 198, 240, 0.10);
-  --accent-line: rgba(63, 198, 240, 0.45);
-  --selected: var(--accent);
-
-  /* Severity scale */
-  --sev-critical: #ff4d5a;
-  --sev-high: #ff8a3d;
-  --sev-medium: #f5c33b;
-  --sev-low: #5b9dff;
-  --sev-info: #8a94a0;
-  --sev-success: #3dd68c;
-  --sev-critical-line: rgba(255, 77, 90, 0.5);
-  --sev-critical-wash: rgba(255, 77, 90, 0.12);
-
-  /* Protocol series */
-  --proto-tcp: #4c9aff;
-  --proto-udp: #a78bfa;
-  --proto-dns: #35d6e8;
-  --proto-http: #45c97a;
-  --proto-tls: #c3a6ff;
-  --proto-icmp: #ffb454;
-  --proto-eth: #7b93a8;
-  --proto-ip: #2dd4bf;
-  --proto-other: #8a94a0;
-
-  /* Success + back-compat aliases. Red means critical only. */
-  --ok: var(--sev-success);
-  --ok-line: rgba(61, 214, 140, 0.45);
-  --ok-wash: rgba(61, 214, 140, 0.10);
-  --signal: var(--sev-critical);
-  --signal-bright: var(--sev-critical);
-  --signal-line: var(--sev-critical-line);
-  --signal-wash: var(--sev-critical-wash);
-
-  /* Type */
-  --font-sans: "Segoe UI", "Inter", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --fs-2xs: 10px;
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-lg: 15px;
   --fs-xl: 18px;
   --fs-2xl: 24px;
-  --lh-tight: 1.25;
-  --lh-normal: 1.5;
+  --fs-3xl: 32px;
+  --fs-metric: 34px;
 
-  /* Spacing scale */
-  --s1: 4px;
-  --s2: 8px;
-  --s3: 12px;
-  --s4: 16px;
-  --s5: 20px;
-  --s6: 24px;
-  --s7: 32px;
-  --s8: 40px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
 
-  /* Structure */
-  --radius: 2px;
-  --radius-lg: 3px;
+  --lh-tight: 1.15;
+  --lh-snug: 1.35;
+  --lh-normal: 1.55;
+
+  --tracking-label: 0.08em;
+  --tracking-metric: -0.02em;
+
+  --fg: #eaeaea;
+  --fg-secondary: #929292;
+  --fg-muted: #6d6d6d;
+  --fg-dim: #4f4f4f;
+  --fg-inverse: #0a0a0a;
+
+  /* ---------- signal colours ---------- */
+  --coral: #ff6f6f;
+  --lime: #a9eb64;
+  --orange: #ff934f;
+  --amber: #e7c55c;
+  --teal: #39cdb0;
+  --cyan: #65c8ed;
+  --blue: #6495ed;
+  --violet: #b68cff;
+  --gray: #8a8a8a;
+
+  /* soft washes for chips, rows and chart fills */
+  --coral-wash: rgba(255, 111, 111, 0.12);
+  --lime-wash: rgba(169, 235, 100, 0.12);
+  --orange-wash: rgba(255, 147, 79, 0.12);
+  --amber-wash: rgba(231, 197, 92, 0.12);
+  --teal-wash: rgba(57, 205, 176, 0.11);
+  --cyan-wash: rgba(101, 200, 237, 0.11);
+  --blue-wash: rgba(100, 149, 237, 0.12);
+  --violet-wash: rgba(182, 140, 255, 0.12);
+  --gray-wash: rgba(138, 138, 138, 0.12);
+
+  /* ---------- semantic severity ---------- */
+  --sev-critical: var(--coral);
+  --sev-critical-wash: var(--coral-wash);
+  --sev-high: var(--orange);
+  --sev-high-wash: var(--orange-wash);
+  --sev-medium: var(--amber);
+  --sev-medium-wash: var(--amber-wash);
+  --sev-low: var(--blue);
+  --sev-low-wash: var(--blue-wash);
+  --sev-info: var(--gray);
+  --sev-info-wash: var(--gray-wash);
+
+  /* ---------- semantic status ---------- */
+  --ok: var(--lime);
+  --ok-wash: var(--lime-wash);
+  --danger: var(--coral);
+  --danger-wash: var(--coral-wash);
+  --warn: var(--orange);
+  --warn-wash: var(--orange-wash);
+  --info: var(--blue);
+  --info-wash: var(--blue-wash);
+  --accent: var(--cyan);
+  --accent-wash: var(--cyan-wash);
+  --selected: var(--cyan);
+
+  /* ---------- protocol colours ---------- */
+  --proto-tcp: var(--blue);
+  --proto-udp: var(--violet);
+  --proto-dns: var(--teal);
+  --proto-http: var(--lime);
+  --proto-tls: var(--cyan);
+  --proto-icmp: var(--orange);
+  --proto-other: var(--gray);
+  --proto-ether: #7b93a8;
+  --proto-ip: var(--teal);
+
+  /* ---------- spacing scale ---------- */
+  --s-0: 0;
+  --s-1: 2px;
+  --s-2: 4px;
+  --s-3: 6px;
+  --s-4: 8px;
+  --s-5: 12px;
+  --s-6: 16px;
+  --s-7: 20px;
+  --s-8: 24px;
+  --s-9: 32px;
+  --s-10: 40px;
+  --s-11: 56px;
+
+  /* ---------- metrics ---------- */
+  --rail-w: 60px;
+  --rail-w-expanded: 208px;
+  --topbar-h: 56px;
+  --row-h: 30px;
+  --row-h-compact: 26px;
   --control-h: 28px;
-  --topbar-h: 60px;
-  --sidebar-w: 236px;
-  --drawer-w: 520px;
+  --control-h-lg: 34px;
 
-  /* Charts */
-  --chart-grid: #1b2732;
-  --chart-axis: var(--fg-dim);
+  /* ---------- radii ---------- */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
 
-  --scroll-thumb: #2b2b2f;
-  --scroll-thumb-hover: #3a3a40;
+  /* ---------- elevation (barely-there) ---------- */
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  --shadow-panel: 0 12px 40px rgba(0, 0, 0, 0.55);
 
-  --overlay: rgba(4, 6, 9, 0.74);
-  --trans: 90ms linear;
+  /* ---------- motion ---------- */
+  --t-fast: 110ms;
+  --t-base: 170ms;
+  --t-slow: 260ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  /* ---------- layers ---------- */
+  --z-rail: 20;
+  --z-topbar: 30;
+  --z-dropdown: 40;
+  --z-overlay: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t-base: 0ms;
+    --t-slow: 0ms;
+  }
 }

@@ -358,6 +358,22 @@ pub fn overview(conn: &Connection) -> AppResult<Overview> {
         conn,
         "SELECT ifnull(category, 'unknown'), COUNT(*) c FROM events GROUP BY category          ORDER BY c DESC LIMIT 8",
     )?;
+    let event_severity_distribution = count_by(
+        conn,
+        "SELECT ifnull(severity, 'info'), COUNT(*) FROM events GROUP BY severity \
+         ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 \
+         WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END",
+    )?;
+    let top_ports = count_by(
+        conn,
+        "SELECT CAST(dst_port AS TEXT), COUNT(*) c FROM events WHERE dst_port IS NOT NULL \
+         GROUP BY dst_port ORDER BY c DESC LIMIT 6",
+    )?;
+    let top_hosts = count_by(
+        conn,
+        "SELECT hostname, COUNT(*) c FROM events WHERE hostname IS NOT NULL AND hostname <> '' \
+         GROUP BY hostname ORDER BY c DESC LIMIT 6",
+    )?;
     let recent_alerts = {
         let sql = format!(
             "SELECT {ALERT_COLUMNS} FROM alerts ORDER BY created_at DESC, id DESC LIMIT 5"
@@ -416,6 +432,9 @@ pub fn overview(conn: &Connection) -> AppResult<Overview> {
         top_dst_ips,
         protocol_distribution,
         category_distribution,
+        event_severity_distribution,
+        top_ports,
+        top_hosts,
         volume_series,
         flow_summary,
     })
@@ -432,4 +451,167 @@ where
         job(conn)
     })
     .await
+}
+// -------------------------------------------------------------- topology
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "critical" => 5,
+        "high" => 4,
+        "medium" => 3,
+        "low" => 2,
+        "info" => 1,
+        _ => 0,
+    }
+}
+
+fn endpoint_kind(ip: &str) -> &'static str {
+    match ip.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => {
+            if v4.is_private() || v4.is_loopback() || v4.is_link_local() {
+                "internal"
+            } else {
+                "external"
+            }
+        }
+        Ok(std::net::IpAddr::V6(v6)) => {
+            let first = v6.segments()[0];
+            if v6.is_loopback() || (first & 0xfe00) == 0xfc00 {
+                "internal"
+            } else {
+                "external"
+            }
+        }
+        Err(_) => "unknown",
+    }
+}
+
+/// Relationship graph derived only from stored events and alerts.
+/// Nodes are observed IP addresses, edges are observed conversations.
+pub fn topology(conn: &Connection, max_edges: u32) -> AppResult<Topology> {
+    let limit = max_edges.clamp(10, 400) as i64;
+
+    // Worst alert severity per address.
+    let mut alert_sev: std::collections::HashMap<String, (u8, String, i64)> = Default::default();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT ifnull(src_ip, ''), severity, COUNT(*) FROM alerts
+             WHERE src_ip IS NOT NULL AND src_ip <> '' GROUP BY src_ip, severity",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (ip, severity, count) = row?;
+            let rank = severity_rank(&severity);
+            let entry = alert_sev.entry(ip).or_insert((0, "none".into(), 0));
+            entry.2 += count;
+            if rank > entry.0 {
+                entry.0 = rank;
+                entry.1 = severity;
+            }
+        }
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT src_ip, dst_ip, ifnull(transport, ''), ifnull(app_proto, ''), COUNT(*) c, MAX(ts)
+         FROM events
+         WHERE src_ip IS NOT NULL AND src_ip <> '' AND dst_ip IS NOT NULL AND dst_ip <> ''
+         GROUP BY src_ip, dst_ip, transport, app_proto
+         ORDER BY c DESC LIMIT ?1",
+    )?;
+    struct Acc {
+        events: i64,
+        last_seen: i64,
+        transport: String,
+        app_proto: String,
+    }
+    let mut pairs: std::collections::HashMap<(String, String), Acc> = Default::default();
+    let rows = stmt.query_map([limit], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, i64>(4)?,
+            r.get::<_, i64>(5)?,
+        ))
+    })?;
+    for row in rows {
+        let (src, dst, transport, app_proto, count, last_seen) = row?;
+        let entry = pairs
+            .entry((src, dst))
+            .or_insert(Acc { events: 0, last_seen: 0, transport: String::new(), app_proto: String::new() });
+        entry.events += count;
+        entry.last_seen = entry.last_seen.max(last_seen);
+        if entry.transport.is_empty() && !transport.is_empty() {
+            entry.transport = transport;
+        }
+        if entry.app_proto.is_empty() && !app_proto.is_empty() {
+            entry.app_proto = app_proto;
+        }
+    }
+
+    let total_pairs: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM events
+           WHERE src_ip IS NOT NULL AND src_ip <> '' AND dst_ip IS NOT NULL AND dst_ip <> ''
+           GROUP BY src_ip, dst_ip)",
+        [],
+        |r| r.get(0),
+    )?;
+
+    let mut nodes: std::collections::HashMap<String, TopologyNode> = Default::default();
+    let mut edges = Vec::new();
+    for ((src, dst), acc) in pairs.into_iter() {
+        let src_alert = alert_sev.get(&src);
+        let dst_alert = alert_sev.get(&dst);
+        let edge_rank = src_alert.map(|a| a.0).unwrap_or(0).max(dst_alert.map(|a| a.0).unwrap_or(0));
+        let edge_severity = src_alert
+            .filter(|a| a.0 == edge_rank)
+            .or(dst_alert.filter(|a| a.0 == edge_rank))
+            .map(|a| a.1.clone())
+            .unwrap_or_else(|| "none".into());
+        for ip in [&src, &dst] {
+            let entry = nodes.entry(ip.clone()).or_insert_with(|| {
+                let (rank, severity, alerts) = alert_sev
+                    .get(ip)
+                    .cloned()
+                    .unwrap_or((0, "none".into(), 0));
+                let _ = rank;
+                TopologyNode {
+                    id: ip.clone(),
+                    label: ip.clone(),
+                    kind: endpoint_kind(ip).to_string(),
+                    events: 0,
+                    alerts,
+                    severity,
+                    last_seen: 0,
+                }
+            });
+            entry.events += acc.events;
+            entry.last_seen = entry.last_seen.max(acc.last_seen);
+        }
+        edges.push(TopologyEdge {
+            source: src,
+            target: dst,
+            events: acc.events,
+            transport: if acc.transport.is_empty() { None } else { Some(acc.transport) },
+            app_proto: if acc.app_proto.is_empty() { None } else { Some(acc.app_proto) },
+            severity: edge_severity,
+        });
+    }
+
+    let mut nodes: Vec<TopologyNode> = nodes.into_values().collect();
+    nodes.sort_by(|a, b| b.events.cmp(&a.events));
+    nodes.truncate(120);
+
+    Ok(Topology {
+        nodes,
+        edges,
+        truncated: total_pairs > limit,
+    })
 }

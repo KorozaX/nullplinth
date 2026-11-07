@@ -299,6 +299,9 @@ pub struct Overview {
     pub top_dst_ips: Vec<Count>,
     pub protocol_distribution: Vec<Count>,
     pub category_distribution: Vec<Count>,
+    pub event_severity_distribution: Vec<Count>,
+    pub top_ports: Vec<Count>,
+    pub top_hosts: Vec<Count>,
     pub volume_series: Vec<TimeBucket>,
     pub flow_summary: FlowSummary,
 }
@@ -602,4 +605,41 @@ impl Default for AppPreferences {
             startup_behavior: "ask".to_string(),
         }
     }
+}
+// --------------------------------------------------------------- topology
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyNode {
+    /// IP address - the stable id used by edges.
+    pub id: String,
+    pub label: String,
+    /// internal | external | unknown
+    pub kind: String,
+    pub events: i64,
+    pub alerts: i64,
+    /// Worst alert severity on this entity, or "none" when it has no alerts.
+    pub severity: String,
+    pub last_seen: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopologyEdge {
+    pub source: String,
+    pub target: String,
+    pub events: i64,
+    pub transport: Option<String>,
+    pub app_proto: Option<String>,
+    /// Worst alert severity involving either endpoint, or "none".
+    pub severity: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Topology {
+    pub nodes: Vec<TopologyNode>,
+    pub edges: Vec<TopologyEdge>,
+    /// True when more relationships existed than the returned edge limit.
+    pub truncated: bool,
 }

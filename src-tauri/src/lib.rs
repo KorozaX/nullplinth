@@ -31,6 +31,7 @@ pub fn run() {
             commands::list_datasets,
             commands::delete_dataset,
             commands::get_overview,
+            commands::network_topology,
             commands::load_demo_data,
             commands::workspace_state,
             commands::clear_workspace,

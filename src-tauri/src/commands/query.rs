@@ -37,3 +37,16 @@ pub async fn export_events(
     })
     .await
 }
+/// Relationship graph for the overview: observed hosts and conversations.
+#[tauri::command]
+pub async fn network_topology(
+    state: tauri::State<'_, AppState>,
+    max_edges: Option<u32>,
+) -> AppResult<crate::types::Topology> {
+    let db = state.db.clone();
+    blocking(move || {
+        let conn = db.conn()?;
+        crate::query::topology(&conn, max_edges.unwrap_or(120))
+    })
+    .await
+}

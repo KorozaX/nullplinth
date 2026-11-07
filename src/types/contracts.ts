@@ -189,6 +189,9 @@ export interface Overview {
   topDstIps: Count[];
   protocolDistribution: Count[];
   categoryDistribution: Count[];
+  eventSeverityDistribution: Count[];
+  topPorts: Count[];
+  topHosts: Count[];
   volumeSeries: TimeBucket[];
   flowSummary: FlowSummary;
 }
@@ -393,4 +396,30 @@ export interface WorkspaceClearResult {
 export interface AppPreferences {
   /** "ask" (default) or "resume". */
   startupBehavior: "ask" | "resume" | string;
+}
+export interface TopologyNode {
+  /** IP address, also the edge endpoint id. */
+  id: string;
+  label: string;
+  kind: "internal" | "external" | "unknown" | string;
+  events: number;
+  alerts: number;
+  /** Worst alert severity on this entity, or "none". */
+  severity: string;
+  lastSeen: number;
+}
+
+export interface TopologyEdge {
+  source: string;
+  target: string;
+  events: number;
+  transport: string | null;
+  appProto: string | null;
+  severity: string;
+}
+
+export interface Topology {
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+  truncated: boolean;
 }

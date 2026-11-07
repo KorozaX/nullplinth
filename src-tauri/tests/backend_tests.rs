@@ -310,3 +310,45 @@ fn first_page_returns_matching_rows() {
     assert_eq!(clamped.events.len(), 12);
     assert_eq!(clamped.page, 1);
 }
+/// The overview relationship graph must be derived from stored events and alerts only.
+#[test]
+fn topology_reflects_real_events_and_alerts() {
+    let db = temp_db("topology");
+    seed(&db, demo::generate());
+    let conn = db.conn().unwrap();
+    detection::run_rules(&conn, None).unwrap();
+
+    let graph = query::topology(&conn, 120).unwrap();
+    assert!(!graph.nodes.is_empty(), "nodes must come from stored events");
+    assert!(!graph.edges.is_empty(), "edges must come from observed conversations");
+    assert!(!graph.truncated, "demo data fits inside the edge limit");
+
+    // Endpoint classification: the demo brute-force source is public, the servers are private.
+    let brute = graph
+        .nodes
+        .iter()
+        .find(|n| n.id == "203.0.113.44")
+        .expect("brute-force source must appear as a node");
+    assert_eq!(brute.kind, "external");
+    assert!(brute.alerts > 0, "its alert must be attached");
+    assert_ne!(brute.severity, "none");
+    assert!(brute.events > 0);
+
+    let internal = graph
+        .nodes
+        .iter()
+        .find(|n| n.id.starts_with("10.0.0."))
+        .expect("internal hosts must appear");
+    assert_eq!(internal.kind, "internal");
+
+    // Every edge endpoint must exist as a node.
+    for edge in &graph.edges {
+        assert!(graph.nodes.iter().any(|n| n.id == edge.source));
+        assert!(graph.nodes.iter().any(|n| n.id == edge.target));
+        assert!(edge.events > 0);
+    }
+
+    // Limits are honoured.
+    let small = query::topology(&conn, 10).unwrap();
+    assert!(small.edges.len() <= 10);
+}

@@ -25,6 +25,7 @@ import type {
   PacketPage,
   PacketQuery,
   PacketRow,
+  Topology,
   AppPreferences,
   WorkspaceClearResult,
   WorkspaceState,
@@ -32,6 +33,10 @@ import type {
 
 export const api = {
   getOverview: () => invoke<Overview>("get_overview"),
+
+  /** Relationship graph derived from stored events and alerts. */
+  networkTopology: (maxEdges?: number) =>
+    invoke<Topology>("network_topology", { maxEdges: maxEdges ?? null }),
 
   listDatasets: () => invoke<Dataset[]>("list_datasets"),
   deleteDataset: (datasetId: number) => invoke<void>("delete_dataset", { datasetId }),

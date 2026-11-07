@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
-import { Database, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Database, Download, Lock, Moon, Save, ShieldCheck, Trash2 } from "lucide-react";
 
 import { api } from "../services/api";
-import type { DetectionSettings } from "../types/contracts";
+import type { DetectionSettings, EventQuery } from "../types/contracts";
+import { useMode } from "../context/ModeContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { errorMessage, useLoad } from "../lib/async";
 import { pickSavePath } from "../lib/dialog";
-import { formatNumber } from "../lib/format";
+import { formatBytes, formatNumber } from "../lib/format";
 import { clearedWorkspaceMessage } from "../lib/importResults";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
 import { Field, Select, TextInput } from "../components/ui/Field";
+import "../styles/screen-settings.css";
 
 interface SettingField {
   key: keyof DetectionSettings;
@@ -42,11 +44,24 @@ function validate(settings: DetectionSettings): Partial<Record<keyof DetectionSe
   return errors;
 }
 
+async function resolveAppDataDir(): Promise<string | null> {
+  try {
+    const pathApi = await import("@tauri-apps/api/path");
+    const dir = await pathApi.appDataDir();
+    return typeof dir === "string" && dir.length > 0 ? dir : null;
+  } catch {
+    return null;
+  }
+}
+
 export function SettingsScreen() {
   const { version, refresh } = useWorkspace();
+  const { mode, setMode } = useMode();
   const settings = useLoad(() => api.getSettings(), []);
   const preferences = useLoad(() => api.getPreferences(), []);
   const workspace = useLoad(() => api.workspaceState(), [version]);
+  const datasets = useLoad(() => api.listDatasets(), [version]);
+  const captures = useLoad(() => api.listCaptures(), [version]);
 
   const [draft, setDraft] = useState<DetectionSettings | null>(null);
   const [errors, setErrors] = useState<Partial<Record<keyof DetectionSettings, string>>>({});
@@ -63,6 +78,12 @@ export function SettingsScreen() {
   const [clearNotice, setClearNotice] = useState<string | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
 
+  const [appDataDir, setAppDataDir] = useState<string | null>(null);
+  const [exportFormat, setExportFormat] = useState<"json" | "csv">("json");
+  const [exporting, setExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
   useEffect(() => {
     if (settings.data) setDraft(settings.data);
   }, [settings.data]);
@@ -72,6 +93,16 @@ export function SettingsScreen() {
       setStartup(preferences.data.startupBehavior === "resume" ? "resume" : "ask");
     }
   }, [preferences.data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolveAppDataDir().then((dir) => {
+      if (!cancelled) setAppDataDir(dir);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function updateValue(key: keyof DetectionSettings, raw: string) {
     const parsed = raw.trim().length === 0 ? Number.NaN : Number(raw);
@@ -121,6 +152,36 @@ export function SettingsScreen() {
     }
   }
 
+  async function exportAllEvents() {
+    const target = await pickSavePath("nullplinth-events." + exportFormat, [
+      { name: exportFormat === "json" ? "JSON export" : "CSV export", extensions: [exportFormat] },
+    ]);
+    if (!target) return;
+    setExporting(true);
+    setExportError(null);
+    setExportNotice(null);
+    try {
+      const query: EventQuery = {
+        datasetIds: [],
+        sourceTypes: [],
+        fromTs: null,
+        toTs: null,
+        filters: [],
+        text: null,
+        sort: "ts",
+        sortDir: "asc",
+        page: 0,
+        pageSize: 1_000_000,
+      };
+      const written = await api.exportEvents({ path: target, format: exportFormat, query });
+      setExportNotice("Exported every stored event to " + written + ".");
+    } catch (cause) {
+      setExportError(errorMessage(cause));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function clearWorkspace() {
     setClearing(true);
     setClearError(null);
@@ -150,18 +211,96 @@ export function SettingsScreen() {
   if (settings.error) return <ErrorState message={settings.error} onRetry={settings.reload} />;
 
   const workspaceCounts = workspace.data;
+  const datasetList = datasets.data ?? [];
+  const captureList = captures.data ?? [];
+  let importedBytes = 0;
+  for (const dataset of datasetList) importedBytes += dataset.fileSize ?? 0;
+  for (const capture of captureList) importedBytes += capture.fileSize ?? 0;
+  const storagePath = appDataDir ?? "Per-user application data directory (resolved by the desktop shell)";
 
   return (
-    <div className="page">
-      <div className="page__bar">
-        <p className="page__lede">
-          Detection thresholds control how much evidence is required before a rule raises an alert. Workspace controls live
-          in the local SQLite database on this machine.
-        </p>
+    <div className="page settings-page">
+      <div className="page__head">
+        <div className="page__titles">
+          <h2 className="page__title">Settings</h2>
+          <p className="page__lede">
+            Thresholds control how much evidence a rule needs before it raises an alert. Experience, startup and storage
+            controls live in the local SQLite database on this machine.
+          </p>
+        </div>
+        <div className="page__actions">
+          <span className="settings-version mono">version 0.2.0</span>
+        </div>
       </div>
 
       {notice ? <Notice tone="ok">{notice}</Notice> : null}
       {actionError ? <Notice tone="error">{actionError}</Notice> : null}
+
+      <div className="settings-grid">
+        <Panel title="Appearance">
+          <div className="settings-block">
+            <span className="settings-block__head">
+              <span className="settings-block__title">
+                <Moon size={13} aria-hidden="true" /> Theme
+              </span>
+              <span className="chip chip--other settings-lock">
+                <Lock size={10} aria-hidden="true" /> Dark only
+              </span>
+            </span>
+            <span className="settings-block__hint">
+              NULLPLINTH is built for a dark operations room: black surfaces, coral signals and low-glare typography. A
+              light theme is intentionally not offered.
+            </span>
+          </div>
+          <div className="settings-block">
+            <span className="settings-block__head">
+              <span className="settings-block__title">Experience</span>
+            </span>
+            <span className="settings-block__hint">
+              Beginner trims technical columns and explains each panel in plain language. Analyst keeps raw rules,
+              confidence values and identifiers visible.
+            </span>
+            <div className="settings-mode" role="group" aria-label="Experience mode">
+              <Button
+                size="sm"
+                variant={mode === "beginner" ? "primary" : "ghost"}
+                aria-pressed={mode === "beginner"}
+                onClick={() => setMode("beginner")}
+              >
+                Beginner
+              </Button>
+              <Button
+                size="sm"
+                variant={mode === "analyst" ? "primary" : "ghost"}
+                aria-pressed={mode === "analyst"}
+                onClick={() => setMode("analyst")}
+              >
+                Analyst
+              </Button>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel title="Startup behaviour">
+          <div className="settings-block">
+            <Field
+              label="When NULLPLINTH starts with existing data"
+              hint="Asking is the default. Resume opens the workbench immediately."
+            >
+              <Select
+                value={startup}
+                disabled={preferences.loading}
+                onChange={(event) => void changeStartup(event.target.value === "resume" ? "resume" : "ask")}
+              >
+                <option value="ask">Ask how to start</option>
+                <option value="resume">Resume automatically</option>
+              </Select>
+            </Field>
+            {startupNotice ? <Notice tone="ok">{startupNotice}</Notice> : null}
+            {preferences.error ? <Notice tone="error">{preferences.error}</Notice> : null}
+          </div>
+        </Panel>
+      </div>
 
       <Panel title="Detection thresholds">
         {draft ? (
@@ -194,30 +333,20 @@ export function SettingsScreen() {
         )}
       </Panel>
 
-      <Panel title="Startup behaviour">
-        <div className="grid-2">
-          <Field
-            label="When NULLPLINTH starts with existing data"
-            hint="Asking is the default. Resume opens the workbench immediately."
-          >
-            <Select
-              value={startup}
-              disabled={preferences.loading}
-              onChange={(event) => void changeStartup(event.target.value === "resume" ? "resume" : "ask")}
-            >
-              <option value="ask">Ask how to start</option>
-              <option value="resume">Resume automatically</option>
-            </Select>
-          </Field>
-          <div>
-            {startupNotice ? <Notice tone="ok">{startupNotice}</Notice> : null}
-            {preferences.error ? <Notice tone="error">{preferences.error}</Notice> : null}
+      <div className="settings-grid">
+        <Panel title="Storage">
+          <div className="settings-block">
+            <dl className="settings-kv">
+              <dt>Engine</dt>
+              <dd>SQLite in WAL mode, stored locally on this machine</dd>
+              <dt>Location</dt>
+              <dd className="mono">{storagePath}</dd>
+              <dt>Imported source bytes</dt>
+              <dd className="mono">{formatBytes(importedBytes)}</dd>
+              <dt>Backup</dt>
+              <dd>Written as a full SQLite copy before clearing when you keep the backup option enabled</dd>
+            </dl>
           </div>
-        </div>
-      </Panel>
-
-      <Panel title="Workspace">
-        <div className="stack">
           {workspaceCounts ? (
             <div className="workspace-stats">
               <span className="ws-stat">
@@ -248,63 +377,112 @@ export function SettingsScreen() {
           ) : (
             <LoadingState label="Reading workspace" />
           )}
+        </Panel>
+
+        <Panel title="Export and backup">
+          <div className="settings-block">
+            <span className="settings-block__hint">
+              Export every stored event to a file you choose. Exports contain only local data and are written where you
+              point them; nothing is uploaded.
+            </span>
+            <div className="settings-actions">
+              <Field label="Format">
+                <Select
+                  aria-label="Export format"
+                  value={exportFormat}
+                  onChange={(event) => setExportFormat(event.target.value === "csv" ? "csv" : "json")}
+                >
+                  <option value="json">JSON</option>
+                  <option value="csv">CSV</option>
+                </Select>
+              </Field>
+              <Button icon={Download} onClick={exportAllEvents} disabled={exporting}>
+                {exporting ? "Exporting" : "Export events"}
+              </Button>
+            </div>
+            {exportNotice ? <Notice tone="ok">{exportNotice}</Notice> : null}
+            {exportError ? <Notice tone="error">{exportError}</Notice> : null}
+          </div>
+          <div className="settings-block">
+            <span className="settings-block__hint">
+              A database backup is offered automatically by the clear-workspace flow below. Keep the backup option enabled
+              to receive a full copy of the SQLite database before it is emptied.
+            </span>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Data management">
+        <div className="settings-block settings-danger">
+          <span className="settings-block__head">
+            <span className="settings-block__title">Clear the workspace</span>
+            <span className="chip chip--critical">Destructive</span>
+          </span>
+          <span className="settings-block__hint">
+            Clearing removes datasets, captures, alerts and investigations from the local database. Original imported
+            files remain untouched on disk.
+          </span>
           <label className="checkbox">
             <input type="checkbox" checked={backup} onChange={(event) => setBackup(event.target.checked)} />
             Save a database backup before clearing
           </label>
-          <div className="toolbar">
+          <div className="settings-actions">
             <Button icon={Trash2} variant="danger" onClick={() => setConfirmOpen(true)}>
               Clear workspace
             </Button>
           </div>
           {clearNotice ? <Notice tone="ok">{clearNotice}</Notice> : null}
           {clearError ? <Notice tone="error">{clearError}</Notice> : null}
-          <p className="settings-note">
-            Clearing removes datasets, captures, alerts and investigations from the local database. Original imported files
-            remain untouched on disk.
-          </p>
         </div>
       </Panel>
 
       <Panel title="About NULLPLINTH">
-        <div className="stack">
-          <div className="row">
-            <ShieldCheck size={16} aria-hidden="true" className="dim" />
-            <p className="settings-note">
-              NULLPLINTH is a local-first security analysis workbench. Every imported record stays in a SQLite database in
-              this user's application data directory. The application makes no network requests, and imported content is
-              stored and rendered as text only, never executed.
-            </p>
-          </div>
-          <dl className="about-list">
-            <div>
-              <dt>Version</dt>
-              <dd className="mono">0.2.0</dd>
-            </div>
-            <div>
-              <dt>Storage</dt>
-              <dd>Per-user application data directory (SQLite, WAL mode)</dd>
-            </div>
-            <div>
-              <dt>Network access</dt>
-              <dd>None. No telemetry, no remote sync, no cloud features.</dd>
-            </div>
-            <div>
-              <dt>Parsers</dt>
-              <dd>JSON, NDJSON, Suricata EVE, Zeek TSV, CSV, PCAP and PCAPNG</dd>
-            </div>
-            <div>
-              <dt>Detection rules</dt>
-              <dd>Auth brute force, port scan, DNS NXDOMAIN burst, repeated blocked connections</dd>
-            </div>
-            <div>
-              <dt>Workspace storage</dt>
-              <dd className="mono">
-                <Database size={12} aria-hidden="true" /> local only
-              </dd>
-            </div>
-          </dl>
+        <div className="settings-block">
+          <span className="settings-block__head">
+            <span className="settings-block__title">
+              <ShieldCheck size={13} aria-hidden="true" /> Local-first by design
+            </span>
+            <span className="chip chip--other settings-lock">
+              <Database size={10} aria-hidden="true" /> Offline
+            </span>
+          </span>
+          <span className="settings-block__hint">
+            NULLPLINTH is a local-first security analysis workbench. Every imported record stays in a SQLite database in
+            this user's application data directory. The application makes no network requests, and imported content is
+            stored and rendered as text only, never executed.
+          </span>
         </div>
+        <dl className="about-list">
+          <div>
+            <dt>Version</dt>
+            <dd className="mono">0.3.0</dd>
+          </div>
+          <div>
+            <dt>Storage</dt>
+            <dd>Per-user application data directory (SQLite, WAL mode)</dd>
+          </div>
+          <div>
+            <dt>Network access</dt>
+            <dd>None. No telemetry, no remote sync, no cloud features.</dd>
+          </div>
+          <div>
+            <dt>Parsers</dt>
+            <dd>
+              JSON, NDJSON, Suricata EVE, Zeek TSV, CSV, Linux auth, syslog, web access, firewall key=value, generic text,
+              PCAP and PCAPNG
+            </dd>
+          </div>
+          <div>
+            <dt>Detection rules</dt>
+            <dd>Auth brute force, port scan, DNS NXDOMAIN burst, repeated blocked connections</dd>
+          </div>
+          <div>
+            <dt>Storage footprint</dt>
+            <dd className="mono">
+              <Database size={12} aria-hidden="true" /> {formatBytes(importedBytes)} of imported source files
+            </dd>
+          </div>
+        </dl>
       </Panel>
 
       <ConfirmDialog

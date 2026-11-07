@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { Download, Inbox, Plus, ShieldQuestion, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Download, FileText, Inbox, Plus, ShieldQuestion, X } from "lucide-react";
 
 import { api } from "../services/api";
-import type { Alert, AlertDetail, Investigation, InvestigationDetail } from "../types/contracts";
+import type { Alert, AlertDetail, EventDetail, Investigation, InvestigationDetail } from "../types/contracts";
 import { useMode } from "../context/ModeContext";
 import { errorMessage, useLoad } from "../lib/async";
 import { pickSavePath } from "../lib/dialog";
@@ -13,10 +13,21 @@ import { Panel } from "../components/ui/Panel";
 import { Field, Select, TextArea, TextInput } from "../components/ui/Field";
 import { SeverityBadge, StatusBadge } from "../components/ui/Badge";
 import { Drawer } from "../components/ui/Drawer";
+import { MetricPanel, MetricsStrip } from "../components/MetricPanel";
 import { EventDetailPanel } from "../components/EventDetailPanel";
-import type { EventDetail } from "../types/contracts";
+import "../styles/screen-investigations.css";
 
 const STATUSES = ["open", "investigating", "resolved", "closed"] as const;
+
+interface TimelineItem {
+  key: string;
+  kind: "alert" | "note";
+  ts: number;
+  title: string;
+  detail: string;
+  severity?: string;
+  alert?: Alert;
+}
 
 export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
   const { mode, isAnalyst } = useMode();
@@ -30,6 +41,9 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const [caseSearch, setCaseSearch] = useState("");
+  const [caseStatus, setCaseStatus] = useState<string>("all");
 
   const [titleDraft, setTitleDraft] = useState("");
   const [descriptionDraft, setDescriptionDraft] = useState("");
@@ -51,7 +65,10 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
   }, [focusId]);
 
   const detail = useLoad<InvestigationDetail | null>(
-    () => (selectedId === null ? Promise.resolve<InvestigationDetail | null>(null) : api.getInvestigation(selectedId)),
+    () =>
+      selectedId === null
+        ? Promise.resolve<InvestigationDetail | null>(null)
+        : Promise.resolve(api.getInvestigation(selectedId)),
     [selectedId],
   );
 
@@ -193,17 +210,78 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
   const active: InvestigationDetail | null = detail.data;
   const investigation = active ? active.investigation : null;
 
+  const filteredCases = useMemo(() => {
+    const needle = caseSearch.trim().toLowerCase();
+    return investigations.filter((entry) => {
+      if (caseStatus !== "all" && entry.status !== caseStatus) return false;
+      if (needle.length === 0) return true;
+      return (entry.title + " " + entry.description).toLowerCase().includes(needle);
+    });
+  }, [investigations, caseSearch, caseStatus]);
+
+  // Open the first matching case on load so the detail pane is never empty while cases exist.
+  useEffect(() => {
+    if (focusId !== null || selectedId !== null) return;
+    if (filteredCases.length === 0) return;
+    setSelectedId(filteredCases[0].id);
+  }, [filteredCases, selectedId, focusId]);
+
+  const caseStats = useMemo(() => {
+    let open = 0;
+    let investigating = 0;
+    let closed = 0;
+    let notes = 0;
+    let alerts = 0;
+    for (const entry of investigations) {
+      if (entry.status === "open") open += 1;
+      if (entry.status === "investigating") investigating += 1;
+      if (entry.status === "resolved" || entry.status === "closed") closed += 1;
+      notes += entry.noteCount;
+      alerts += entry.alertIds.length;
+    }
+    return { open, investigating, closed, notes, alerts };
+  }, [investigations]);
+
+  const timeline = useMemo<TimelineItem[]>(() => {
+    if (!active) return [];
+    const items: TimelineItem[] = [];
+    for (const note of active.notes) {
+      items.push({
+        key: "note-" + String(note.id),
+        kind: "note",
+        ts: note.createdAt,
+        title: "Analyst note",
+        detail: "",
+      });
+    }
+    for (const alert of active.alerts) {
+      items.push({
+        key: "alert-" + String(alert.id),
+        kind: "alert",
+        ts: alert.createdAt,
+        title: alert.title,
+        detail: alert.rule,
+        severity: alert.severity,
+        alert,
+      });
+    }
+    return items.sort((left, right) => right.ts - left.ts);
+  }, [active]);
+
   if (list.loading && !list.data) return <LoadingState label="Loading investigations" />;
   if (list.error) return <ErrorState message={list.error} onRetry={list.reload} />;
 
   return (
-    <div className="page">
-      <div className="page__bar">
-        <p className="page__lede">
-          Keep a written record of what you checked. Investigations collect notes and attached alerts, and export as a
-          single JSON report.
-        </p>
-        <div className="toolbar">
+    <div className="page investigations-page">
+      <div className="page__head">
+        <div className="page__titles">
+          <h2 className="page__title">Investigations</h2>
+          <p className="page__lede">
+            Keep a written record of what you checked. Investigations collect notes and attached alerts, and export as a
+            single JSON report.
+          </p>
+        </div>
+        <div className="page__actions">
           <Button icon={Plus} variant="primary" onClick={() => setShowCreate((current) => !current)}>
             {showCreate ? "Cancel new investigation" : "New investigation"}
           </Button>
@@ -213,8 +291,23 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
       {notice ? <Notice tone="ok">{notice}</Notice> : null}
       {actionError ? <Notice tone="error">{actionError}</Notice> : null}
 
+      <MetricsStrip>
+        <MetricPanel label="Cases" value={formatNumber(investigations.length)} hint="all statuses" tone="accent" />
+        <MetricPanel
+          label="Open"
+          value={formatNumber(caseStats.open)}
+          hint={formatNumber(caseStats.investigating) + " investigating"}
+        />
+        <MetricPanel label="Closed" value={formatNumber(caseStats.closed)} hint="resolved or closed" />
+        <MetricPanel label="Notes" value={formatNumber(caseStats.notes)} hint="across every case" />
+        <MetricPanel label="Attached alerts" value={formatNumber(caseStats.alerts)} hint="linked evidence" />
+      </MetricsStrip>
+
       {showCreate ? (
-        <Panel title="New investigation" actions={<IconButton icon={X} label="Close new investigation form" onClick={() => setShowCreate(false)} />}>
+        <Panel
+          title="New investigation"
+          actions={<IconButton icon={X} label="Close new investigation form" onClick={() => setShowCreate(false)} />}
+        >
           <div className="form-grid">
             <Field label="Title" error={createError}>
               <TextInput
@@ -254,24 +347,56 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
         </Panel>
       ) : (
         <div className="split split--side">
-          <Panel title="Cases" meta={formatNumber(investigations.length)} flush>
-            <div className="record-list">
-              {investigations.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  className={"record" + (entry.id === selectedId ? " is-active" : "")}
-                  onClick={() => setSelectedId(entry.id)}
+          <Panel
+            title="Cases"
+            meta={formatNumber(filteredCases.length) + " of " + formatNumber(investigations.length)}
+            flush
+          >
+            <div className="inv-tools">
+              <Field label="Search" className="inv-tools__search">
+                <TextInput
+                  aria-label="Search cases"
+                  placeholder="Title or description"
+                  value={caseSearch}
+                  onChange={(event) => setCaseSearch(event.target.value)}
+                />
+              </Field>
+              <Field label="Status">
+                <Select
+                  aria-label="Filter cases by status"
+                  value={caseStatus}
+                  onChange={(event) => setCaseStatus(event.target.value)}
                 >
-                  <span className="record__title">{entry.title}</span>
-                  <span className="record__meta">
-                    <StatusBadge status={entry.status} />
-                    <span>{formatTimestamp(entry.updatedAt, mode)}</span>
-                    {isAnalyst ? <span className="mono">{"#" + String(entry.id)}</span> : null}
-                    <span>{formatNumber(entry.noteCount) + (entry.noteCount === 1 ? " note" : " notes")}</span>
-                  </span>
-                </button>
-              ))}
+                  <option value="all">All statuses</option>
+                  {STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+            <div className="record-list">
+              {filteredCases.length === 0 ? (
+                <p className="inv-empty-hint">No cases match this filter.</p>
+              ) : (
+                filteredCases.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={"record" + (entry.id === selectedId ? " is-active" : "")}
+                    onClick={() => setSelectedId(entry.id)}
+                  >
+                    <span className="record__title">{entry.title}</span>
+                    <span className="record__meta">
+                      <StatusBadge status={entry.status} />
+                      <span>{formatTimestamp(entry.updatedAt, mode)}</span>
+                      {isAnalyst ? <span className="mono">{"#" + String(entry.id)}</span> : null}
+                      <span>{formatNumber(entry.noteCount) + (entry.noteCount === 1 ? " note" : " notes")}</span>
+                    </span>
+                  </button>
+                ))
+              )}
             </div>
           </Panel>
 
@@ -280,20 +405,58 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
             meta={investigation ? formatTimestamp(investigation.updatedAt, mode) : undefined}
             actions={
               investigation ? (
-                <Button size="sm" variant="ghost" icon={Download} onClick={exportInvestigation} disabled={busy}>
-                  Export report
-                </Button>
+                <div className="toolbar">
+                  <Button size="sm" variant="ghost" icon={Download} onClick={exportInvestigation} disabled={busy}>
+                    Export report
+                  </Button>
+                </div>
               ) : undefined
             }
           >
             {selectedId === null ? (
-              <EmptyState icon={Inbox} title="Select an investigation" description="Choose a case from the list to read its notes and attached alerts." />
+              <EmptyState
+                icon={Inbox}
+                title="Select an investigation"
+                description="Choose a case from the list to read its notes and attached alerts."
+              />
             ) : detail.loading && !detail.data ? (
               <LoadingState label="Loading investigation" />
             ) : detail.error ? (
               <ErrorState message={detail.error} onRetry={detail.reload} />
             ) : active && investigation ? (
               <div className="stack">
+                <div className="inv-detail-head">
+                  <StatusBadge status={investigation.status} />
+                  <span className="dim mono">{"#" + String(investigation.id)}</span>
+                  {isAnalyst ? (
+                    <span className="dim mono">
+                      created {formatTimestamp(investigation.createdAt, mode)} | updated{" "}
+                      {formatTimestamp(investigation.updatedAt, mode)}
+                    </span>
+                  ) : (
+                    <span className="dim">updated {formatTimestamp(investigation.updatedAt, mode)}</span>
+                  )}
+                </div>
+
+                <div className="inv-facts">
+                  <span className="inv-fact">
+                    <span className="inv-fact__label">Status</span>
+                    <span className="inv-fact__value">{investigation.status}</span>
+                  </span>
+                  <span className="inv-fact">
+                    <span className="inv-fact__label">Alerts</span>
+                    <span className="inv-fact__value">{formatNumber(active.alerts.length)}</span>
+                  </span>
+                  <span className="inv-fact">
+                    <span className="inv-fact__label">Notes</span>
+                    <span className="inv-fact__value">{formatNumber(active.notes.length)}</span>
+                  </span>
+                  <span className="inv-fact">
+                    <span className="inv-fact__label">Updated</span>
+                    <span className="inv-fact__value">{formatTimestamp(investigation.updatedAt, mode)}</span>
+                  </span>
+                </div>
+
                 <div className="form-grid">
                   <Field label="Title">
                     <TextInput value={titleDraft} onChange={(event) => setTitleDraft(event.target.value)} />
@@ -307,20 +470,14 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
                       ))}
                     </Select>
                   </Field>
+                  <Field label="Description" className="form-grid__wide">
+                    <TextArea value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} />
+                  </Field>
                 </div>
-                <Field label="Description">
-                  <TextArea value={descriptionDraft} onChange={(event) => setDescriptionDraft(event.target.value)} />
-                </Field>
                 <div className="toolbar">
                   <Button onClick={saveInvestigation} disabled={busy}>
                     {busy ? "Saving" : "Save changes"}
                   </Button>
-                  {isAnalyst ? (
-                    <span className="dim mono">
-                      created {formatTimestamp(investigation.createdAt, mode)} | id {String(investigation.id)} | alerts{" "}
-                      {formatNumber(investigation.alertIds.length)}
-                    </span>
-                  ) : null}
                 </div>
 
                 <div className="detail-section">
@@ -332,9 +489,11 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
                       {active.alerts.map((alert) => (
                         <li key={alert.id}>
                           <button type="button" className="evidence" onClick={() => void openAlert(alert)}>
-                            <SeverityBadge severity={alert.severity} />
-                            <span className="evidence__summary">{alert.title}</span>
-                            <StatusBadge status={alert.status} />
+                            <span className="inv-alert-item">
+                              <SeverityBadge severity={alert.severity} />
+                              <span className="evidence__summary">{alert.title}</span>
+                              <StatusBadge status={alert.status} />
+                            </span>
                           </button>
                         </li>
                       ))}
@@ -343,17 +502,51 @@ export function InvestigationsScreen({ focusId }: { focusId: number | null }) {
                 </div>
 
                 <div className="detail-section">
+                  <h3 className="subhead">Activity timeline ({formatNumber(timeline.length)})</h3>
+                  {timeline.length === 0 ? (
+                    <p className="muted">Notes and attached alerts will build the case timeline.</p>
+                  ) : (
+                    <ul className="inv-timeline">
+                      {timeline.map((item) => (
+                        <li className={"inv-timeline__item inv-timeline__item--" + item.kind} key={item.key}>
+                          <span className="inv-timeline__marker" aria-hidden="true">
+                            {item.kind === "alert" ? <AlertTriangle size={10} /> : <FileText size={10} />}
+                          </span>
+                          <span className="inv-timeline__body">
+                            <span className="inv-timeline__head">
+                              <span className="inv-timeline__when">{formatTimestamp(item.ts, mode)}</span>
+                              <span className="inv-timeline__kind">{item.kind === "alert" ? "alert" : "note"}</span>
+                              {item.alert ? (
+                                <button
+                                  type="button"
+                                  className="btn btn--ghost btn--sm"
+                                  onClick={() => void openAlert(item.alert as Alert)}
+                                >
+                                  Open alert
+                                </button>
+                              ) : null}
+                            </span>
+                            <span className="inv-timeline__text">{item.kind === "alert" ? item.title : "Analyst note added"}</span>
+                            {item.kind === "alert" ? (
+                              <span className="inv-timeline__text dim">{item.detail}</span>
+                            ) : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="detail-section inv-notes">
                   <h3 className="subhead">Notes ({formatNumber(active.notes.length)})</h3>
                   {active.notes.length === 0 ? (
                     <p className="muted">No notes yet. The first note starts the timeline.</p>
                   ) : (
                     <ul className="record-list">
                       {active.notes.map((note) => (
-                        <li key={note.id} className="record">
-                          <span className="record__meta">{formatTimestamp(note.createdAt, mode)}</span>
-                          <span className="record__title" style={{ whiteSpace: "pre-wrap" }}>
-                            {note.body}
-                          </span>
+                        <li key={note.id} className="inv-note-item">
+                          <span className="inv-note-item__when">{formatTimestamp(note.createdAt, mode)}</span>
+                          <span className="inv-note-item__body">{note.body}</span>
                         </li>
                       ))}
                     </ul>

@@ -1,23 +1,76 @@
-import { useCallback, useState } from "react";
-import { Inbox, Play, RefreshCw, ShieldPlus } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import {
+  AlertOctagon,
+  AlertTriangle,
+  ArrowRight,
+  Inbox,
+  Info,
+  Play,
+  RefreshCw,
+  ShieldAlert,
+  ShieldPlus,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { api } from "../services/api";
 import type { Alert, AlertDetail, DetectionRun, EventDetail } from "../types/contracts";
 import { useMode } from "../context/ModeContext";
 import { errorMessage, useLoad } from "../lib/async";
 import { formatDuration, formatFieldLabel, formatJson, formatNumber, formatTimestamp, formatValue } from "../lib/format";
+import { normalizeSeverity, severityClass, severityLabel } from "../lib/semantic";
 import { Button } from "../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
-import { Field, Select, TextArea } from "../components/ui/Field";
-import { SeverityBadge, StatusBadge } from "../components/ui/Badge";
+import { Field, Select, TextArea, TextInput } from "../components/ui/Field";
+import { StatusBadge } from "../components/ui/Badge";
 import { DataTable } from "../components/ui/Table";
 import type { Column } from "../components/ui/Table";
 import { Drawer } from "../components/ui/Drawer";
+import { MetricPanel, MetricsStrip } from "../components/MetricPanel";
 import { EventDetailPanel } from "../components/EventDetailPanel";
+import "../styles/screen-alerts.css";
 
 const SEVERITIES = ["all", "critical", "high", "medium", "low", "info"] as const;
 const STATUSES = ["all", "new", "investigating", "resolved"] as const;
+const TIME_RANGES = ["all", "15m", "1h", "24h", "7d"] as const;
+
+type TimeRange = (typeof TIME_RANGES)[number];
+
+const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+  all: "Any time",
+  "15m": "Last 15 minutes",
+  "1h": "Last hour",
+  "24h": "Last 24 hours",
+  "7d": "Last 7 days",
+};
+
+const TIME_RANGE_MS: Record<TimeRange, number | null> = {
+  all: null,
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
+
+const SEVERITY_ICONS: Record<string, LucideIcon> = {
+  critical: AlertOctagon,
+  high: AlertTriangle,
+  medium: ShieldAlert,
+  low: Info,
+  info: Info,
+};
+
+/** Severity is carried by colour, an icon and a text label at the same time. */
+function SeverityMark({ severity }: { severity: string }) {
+  const key = normalizeSeverity(severity);
+  const Icon = SEVERITY_ICONS[key] ?? Info;
+  return (
+    <span className={"chip " + severityClass(severity)} data-severity={key}>
+      <Icon size={11} aria-hidden="true" />
+      {severityLabel(severity)}
+    </span>
+  );
+}
 
 function thresholdRows(threshold: unknown): Array<{ key: string; value: string }> {
   if (threshold && typeof threshold === "object" && !Array.isArray(threshold)) {
@@ -29,10 +82,35 @@ function thresholdRows(threshold: unknown): Array<{ key: string; value: string }
   return [{ key: "Threshold", value: formatValue(threshold) }];
 }
 
+function severityFromCounts(counts: Record<string, number>, severity: string): number {
+  return counts[severity] ?? 0;
+}
+
+/** Render only the endpoints that exist; never an orphan arrow or placeholder dash. */
+function Endpoints({ alert }: { alert: Alert }) {
+  const source = alert.srcIp && alert.srcIp.trim().length > 0 ? alert.srcIp : null;
+  const destination = alert.dstIp && alert.dstIp.trim().length > 0 ? alert.dstIp : null;
+  if (!source && !destination) {
+    return <span className="dim">no endpoint recorded</span>;
+  }
+  return (
+    <span className="alerts-entities">
+      {source ? <span className="mono">{source}</span> : null}
+      {source && destination ? (
+        <ArrowRight className="alerts-entities__arrow" size={11} aria-hidden="true" />
+      ) : null}
+      {destination ? <span className="mono">{destination}</span> : null}
+    </span>
+  );
+}
+
 export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (investigationId: number) => void }) {
   const { mode, isAnalyst } = useMode();
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [ruleFilter, setRuleFilter] = useState<string>("all");
+  const [ipFilter, setIpFilter] = useState<string>("");
+  const [timeRange, setTimeRange] = useState<TimeRange>("all");
 
   const alerts = useLoad(
     () =>
@@ -160,17 +238,85 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
     }
   }
 
+  const alertList = alerts.data ?? [];
+
+  const rules = useMemo(() => {
+    const unique = new Set<string>();
+    for (const alert of alertList) unique.add(alert.rule);
+    return Array.from(unique).sort();
+  }, [alertList]);
+
+  const visibleAlerts = useMemo(() => {
+    const cutoffMs = TIME_RANGE_MS[timeRange];
+    const cutoff = cutoffMs === null ? null : Date.now() - cutoffMs;
+    const needle = ipFilter.trim().toLowerCase();
+    return alertList.filter((alert) => {
+      if (ruleFilter !== "all" && alert.rule !== ruleFilter) return false;
+      if (cutoff !== null && alert.createdAt < cutoff) return false;
+      if (needle.length > 0) {
+        const haystack = [alert.title, alert.srcIp, alert.dstIp, alert.rule, alert.id]
+          .filter((value) => value !== null && value !== undefined)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
+    });
+  }, [alertList, ruleFilter, ipFilter, timeRange]);
+
+  const counts = useMemo(() => {
+    const bySeverity: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+    let open = 0;
+    let investigating = 0;
+    let linkedEvents = 0;
+    for (const alert of alertList) {
+      bySeverity[normalizeSeverity(alert.severity)] += 1;
+      if (alert.status === "new") open += 1;
+      if (alert.status === "investigating") investigating += 1;
+      linkedEvents += alert.eventCount;
+    }
+    return { bySeverity, open, investigating, linkedEvents };
+  }, [alertList]);
+
+  const filtersActive =
+    severityFilter !== "all" ||
+    statusFilter !== "all" ||
+    ruleFilter !== "all" ||
+    ipFilter.trim().length > 0 ||
+    timeRange !== "all";
+
+  function clearFilters() {
+    setSeverityFilter("all");
+    setStatusFilter("all");
+    setRuleFilter("all");
+    setIpFilter("");
+    setTimeRange("all");
+  }
+
   const columns: ReadonlyArray<Column<Alert>> = [
     {
       key: "severity",
       header: "Severity",
-      width: "96px",
-      render: (alert: Alert) => <SeverityBadge severity={alert.severity} />,
+      width: "110px",
+      render: (alert: Alert) => <SeverityMark severity={alert.severity} />,
     },
-    { key: "title", header: "Alert", render: (alert: Alert) => alert.title },
+    {
+      key: "title",
+      header: "Alert",
+      render: (alert: Alert) => (
+        <span className="alerts-cell">
+          <span className="alerts-cell__title">{alert.title}</span>
+          <span className="alerts-cell__rule mono">{alert.rule}</span>
+        </span>
+      ),
+    },
+    {
+      key: "entity",
+      header: "Source / destination",
+      render: (alert: Alert) => <Endpoints alert={alert} />,
+    },
     ...(isAnalyst
       ? ([
-          { key: "rule", header: "Rule", mono: true, render: (alert: Alert) => alert.rule },
           {
             key: "confidence",
             header: "Conf.",
@@ -196,21 +342,26 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
     },
   ];
 
-  const alertList = alerts.data ?? [];
+  const headActions = (
+    <div className="page__actions">
+      <Button icon={Play} variant="primary" onClick={handleRun} disabled={running}>
+        {running ? "Running detection" : "Run detection"}
+      </Button>
+      <Button icon={RefreshCw} variant="ghost" onClick={alerts.reload} aria-label="Refresh alerts" />
+    </div>
+  );
 
   return (
-    <div className="page">
-      <div className="page__bar">
-        <p className="page__lede">
-          Detection runs locally over the stored events. Every alert links back to the real events that triggered it, with
-          the threshold that fired and the steps worth taking next.
-        </p>
-        <div className="toolbar">
-          <Button icon={Play} variant="primary" onClick={handleRun} disabled={running}>
-            {running ? "Running detection" : "Run detection"}
-          </Button>
-          <Button icon={RefreshCw} variant="ghost" onClick={alerts.reload} aria-label="Refresh alerts" />
+    <div className="page alerts-page">
+      <div className="page__head">
+        <div className="page__titles">
+          <h2 className="page__title">Alerts</h2>
+          <p className="page__lede">
+            Detection runs locally over the stored events. Every alert links back to the real events that triggered it,
+            with the threshold that fired and the steps worth taking next.
+          </p>
         </div>
+        {headActions}
       </div>
 
       {runResult ? (
@@ -227,39 +378,110 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
       ) : null}
       {runError ? <Notice tone="error">{runError}</Notice> : null}
 
-      <Panel
-        title="Alerts"
-        meta={formatNumber(alertList.length) + " shown"}
-        actions={
-          <div className="toolbar">
-            <Select
-              aria-label="Filter by severity"
-              className="select--compact"
-              value={severityFilter}
-              onChange={(event) => setSeverityFilter(event.target.value)}
-            >
-              {SEVERITIES.map((severity) => (
-                <option key={severity} value={severity}>
-                  {severity === "all" ? "All severities" : severity}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Filter by status"
-              className="select--compact"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              {STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {status === "all" ? "All statuses" : status}
-                </option>
-              ))}
-            </Select>
-          </div>
-        }
-        flush
-      >
+      <MetricsStrip>
+        <MetricPanel
+          label="Shown"
+          value={formatNumber(visibleAlerts.length)}
+          hint={formatNumber(alertList.length) + " " + (alertList.length === 1 ? "alert" : "alerts")}
+          tone="accent"
+        />
+        <MetricPanel
+          label="Critical"
+          value={formatNumber(severityFromCounts(counts.bySeverity, "critical"))}
+          hint="needs immediate triage"
+          tone={severityFromCounts(counts.bySeverity, "critical") > 0 ? "critical" : "default"}
+        />
+        <MetricPanel
+          label="High"
+          value={formatNumber(severityFromCounts(counts.bySeverity, "high"))}
+          hint={formatNumber(severityFromCounts(counts.bySeverity, "medium")) + " medium"}
+        />
+        <MetricPanel
+          label="Open"
+          value={formatNumber(counts.open)}
+          hint={formatNumber(counts.investigating) + " investigating"}
+        />
+        <MetricPanel label="Linked events" value={formatNumber(counts.linkedEvents)} hint="evidence rows behind these alerts" />
+      </MetricsStrip>
+
+      <div className="alerts-legend" aria-label="Severity legend">
+        {(["critical", "high", "medium", "low", "info"] as const).map((severity) => (
+          <span className="alerts-legend__item" key={severity}>
+            <SeverityMark severity={severity} />
+          </span>
+        ))}
+      </div>
+
+      <div className="alerts-filterbar">
+        <Field label="Severity">
+          <Select
+            aria-label="Filter by severity"
+            value={severityFilter}
+            onChange={(event) => setSeverityFilter(event.target.value)}
+          >
+            {SEVERITIES.map((severity) => (
+              <option key={severity} value={severity}>
+                {severity === "all" ? "All severities" : severityLabel(severity)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Status">
+          <Select
+            aria-label="Filter by status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+          >
+            {STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status === "all" ? "All statuses" : status}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Rule">
+          <Select
+            aria-label="Filter by rule"
+            value={ruleFilter}
+            onChange={(event) => setRuleFilter(event.target.value)}
+          >
+            <option value="all">All rules</option>
+            {rules.map((rule) => (
+              <option key={rule} value={rule}>
+                {rule}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="IP or title">
+          <TextInput
+            aria-label="Filter by IP address"
+            placeholder="203.0.113.44"
+            value={ipFilter}
+            onChange={(event) => setIpFilter(event.target.value)}
+          />
+        </Field>
+        <Field label="Time">
+          <Select
+            aria-label="Filter by time"
+            value={timeRange}
+            onChange={(event) => setTimeRange(event.target.value as TimeRange)}
+          >
+            {TIME_RANGES.map((range) => (
+              <option key={range} value={range}>
+                {TIME_RANGE_LABELS[range]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <div className="alerts-filterbar__reset">
+          <Button variant="ghost" size="sm" onClick={clearFilters} disabled={!filtersActive}>
+            Clear filters
+          </Button>
+        </div>
+      </div>
+
+      <Panel title="Alert queue" meta={formatNumber(visibleAlerts.length) + " shown"} flush>
         {alerts.loading ? (
           <LoadingState label="Loading alerts" />
         ) : alerts.error ? (
@@ -275,11 +497,22 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
               </Button>
             }
           />
+        ) : visibleAlerts.length === 0 ? (
+          <EmptyState
+            icon={Inbox}
+            title="No alerts match these filters"
+            description="Loosen the severity, rule, IP or time filter to see the rest of the queue."
+            action={
+              <Button variant="ghost" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            }
+          />
         ) : (
           <DataTable
             label="Alerts"
             columns={columns}
-            rows={alertList}
+            rows={visibleAlerts}
             rowKey={(alert: Alert) => alert.id}
             onRowClick={(alert: Alert) => void openAlert(alert.id)}
             selectedKey={selectedAlertId}
@@ -301,13 +534,40 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
           <ErrorState message={detailError} />
         ) : alertDetail ? (
           <div className="detail-grid">
-            <div className="row">
-              <SeverityBadge severity={alertDetail.alert.severity} />
+            <div className="alerts-detail-head">
+              <SeverityMark severity={alertDetail.alert.severity} />
               <StatusBadge status={alertDetail.alert.status} />
-              {isAnalyst ? <span className="badge badge--neutral mono">{alertDetail.alert.rule}</span> : null}
+              <span className="badge badge--neutral mono">{alertDetail.alert.rule}</span>
             </div>
 
             <p className="why-matters">{alertDetail.alert.explanation}</p>
+
+            <div className="alerts-facts">
+              <span className="alerts-fact">
+                <span className="alerts-fact__label">Confidence</span>
+                <span className="alerts-fact__value">{alertDetail.alert.confidence.toFixed(2)}</span>
+              </span>
+              <span className="alerts-fact">
+                <span className="alerts-fact__label">Linked events</span>
+                <span className="alerts-fact__value">{formatNumber(alertDetail.alert.eventCount)}</span>
+              </span>
+              {alertDetail.alert.srcIp ? (
+                <span className="alerts-fact">
+                  <span className="alerts-fact__label">Source</span>
+                  <span className="alerts-fact__value">{alertDetail.alert.srcIp}</span>
+                </span>
+              ) : null}
+              {alertDetail.alert.dstIp ? (
+                <span className="alerts-fact">
+                  <span className="alerts-fact__label">Destination</span>
+                  <span className="alerts-fact__value">{alertDetail.alert.dstIp}</span>
+                </span>
+              ) : null}
+              <span className="alerts-fact alerts-facts__wide">
+                <span className="alerts-fact__label">Created</span>
+                <span className="alerts-fact__value">{formatTimestamp(alertDetail.alert.createdAt, mode)}</span>
+              </span>
+            </div>
 
             {isAnalyst ? (
               <div className="detail-section">
@@ -318,20 +578,8 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
                     <dd className="kv__val mono">{alertDetail.alert.rule}</dd>
                   </div>
                   <div style={{ display: "contents" }}>
-                    <dt className="kv__key">Confidence</dt>
-                    <dd className="kv__val mono">{alertDetail.alert.confidence.toFixed(2)}</dd>
-                  </div>
-                  <div style={{ display: "contents" }}>
-                    <dt className="kv__key">Source IP</dt>
-                    <dd className="kv__val mono">{formatValue(alertDetail.alert.srcIp)}</dd>
-                  </div>
-                  <div style={{ display: "contents" }}>
-                    <dt className="kv__key">Destination IP</dt>
-                    <dd className="kv__val mono">{formatValue(alertDetail.alert.dstIp)}</dd>
-                  </div>
-                  <div style={{ display: "contents" }}>
-                    <dt className="kv__key">Events</dt>
-                    <dd className="kv__val mono">{formatNumber(alertDetail.alert.eventCount)}</dd>
+                    <dt className="kv__key">Rule ID</dt>
+                    <dd className="kv__val mono">{String(alertDetail.alert.id)}</dd>
                   </div>
                 </dl>
               </div>
@@ -371,9 +619,12 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
                   {alertDetail.evidence.map((item) => (
                     <li key={item.kind + "-" + String(item.refId)}>
                       <button type="button" className="evidence" onClick={() => void openEvidenceEvent(item.refId)}>
-                        <span className="mono">{formatTimestamp(item.ts, mode)}</span>
-                        <span className="evidence__summary">{item.summary}</span>
-                        <span className="badge badge--neutral mono">{item.kind}</span>
+                        <span className="alerts-evidence-row">
+                          <span className="alerts-evidence-row__time mono">{formatTimestamp(item.ts, mode)}</span>
+                          <span className="alerts-evidence-row__summary evidence__summary">{item.summary}</span>
+                          <span className="badge badge--neutral mono">{item.kind}</span>
+                          <ArrowRight size={11} aria-hidden="true" className="alerts-entities__arrow" />
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -423,7 +674,7 @@ export function AlertsScreen({ onOpenInvestigation }: { onOpenInvestigation: (in
 
       {alerts.error ? null : (
         <span className="sr-only" aria-live="polite">
-          {alertList.length + " alerts shown"}
+          {visibleAlerts.length + " alerts shown"}
         </span>
       )}
     </div>

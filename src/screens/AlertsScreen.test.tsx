@@ -50,4 +50,25 @@ describe("AlertsScreen", () => {
     expect(await screen.findByText("No alerts yet")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Run detection" }).length).toBeGreaterThan(0);
   });
+
+  it("renders only the endpoints that exist", async () => {
+    vi.mocked(api.listAlerts).mockResolvedValue([
+      { ...bruteForceAlert, id: 101, title: "Source only alert", srcIp: "203.0.113.44", dstIp: null },
+      { ...bruteForceAlert, id: 102, title: "Destination only alert", srcIp: null, dstIp: "10.0.0.5" },
+      { ...bruteForceAlert, id: 103, title: "No endpoint alert", srcIp: null, dstIp: null },
+    ]);
+    renderWithMode(<AlertsScreen onOpenInvestigation={() => undefined} />);
+
+    const sourceRow = (await screen.findByText("Source only alert")).closest("tr");
+    expect(sourceRow).not.toBeNull();
+    expect(sourceRow?.textContent ?? "").toContain("203.0.113.44");
+    expect(sourceRow?.textContent ?? "").not.toContain("\u2014");
+
+    const destinationRow = (await screen.findByText("Destination only alert")).closest("tr");
+    expect(destinationRow).not.toBeNull();
+    expect(destinationRow?.textContent ?? "").toContain("10.0.0.5");
+    expect(destinationRow?.textContent ?? "").not.toContain("\u2014");
+
+    expect(await screen.findByText("no endpoint recorded")).toBeInTheDocument();
+  });
 });

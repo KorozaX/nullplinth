@@ -64,4 +64,11 @@ describe("InvestigationsScreen", () => {
 
     expect(await screen.findByText("No investigations yet")).toBeInTheDocument();
   });
+
+  it("auto-selects the first case so the detail pane is never empty", async () => {
+    renderWithMode(<InvestigationsScreen focusId={null} />);
+
+    expect(await screen.findByLabelText("Add note")).toBeInTheDocument();
+    expect(screen.queryByText("Select an investigation")).not.toBeInTheDocument();
+  });
 });

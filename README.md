@@ -12,7 +12,7 @@ Nothing is uploaded. There is no cloud backend, no telemetry, no account, and no
 
 Get the Windows installer from the [releases page](https://github.com/KorozaX/nullplinth/releases/latest):
 
-- `NULLPLINTH_0.2.0_x64-setup.exe` - per-user install, no administrator rights required.
+- `NULLPLINTH_0.3.0_x64-setup.exe` - per-user install, no administrator rights required.
 - The installer is not code signed, so Windows SmartScreen will ask for confirmation.
 - The app runs fully offline; the only prerequisite is the WebView2 runtime, which ships with
   Windows 10 and 11.
@@ -29,6 +29,7 @@ Get the Windows installer from the [releases page](https://github.com/KorozaX/nu
 | Investigations | Incident records with notes, attached alerts, statuses and export |
 | Two modes | Beginner mode (guided, plain language) and Analyst mode (dense, technical) |
 | Workspace | Startup choice between resuming the previous workspace and starting fresh, with confirmation and optional backup |
+| Interface | Redesigned shell: 60px navigation rail, top bar with global search, dense professional tables, semantic colour system, Urbanist typography, and a data-driven relationship graph of observed hosts and conversations |
 
 ## Stack
 

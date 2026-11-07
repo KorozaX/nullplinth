@@ -3,7 +3,7 @@
 Updated at meaningful milestones. Every line reflects code that exists on disk and has
 been executed on the development machine.
 
-## Status: V1 quality overhaul complete, release 0.2.0 published
+## Status: complete visual redesign shipped as 0.3.0
 
 ### Toolchain on the development machine
 
@@ -14,7 +14,20 @@ been executed on the development machine.
 | Tauri | 2.12 | NSIS bundler |
 | WebView2 runtime | 142.0.3595.53 | present |
 
-### Quality overhaul (this milestone)
+### Complete visual redesign (0.3.0)
+
+| Area | Change | Verified by |
+|------|--------|-------------|
+| Design system | New token file: black surfaces, off-white type, coral/lime/orange signal palette, teal/cyan/blue/violet analytical colours, spacing/row/radius/motion/layer scales | renders identically at 1024-1920 with zero DOM overflow |
+| Typography | Urbanist variable font bundled locally (OFL 1.1) with a system monospace stack for technical values | font asset emitted into the bundle |
+| Shell | 60px icon rail, top bar with workspace summary, global search, fullscreen and mode switch; F11 / Alt+1..7 / Alt+M | shell tests |
+| Overview | Metric strip, event volume, severity mix, protocol donut, top sources/destinations, event severity, top hosts/ports, recent alerts and a **relationship graph from real events and alerts** | rendered review at four resolutions |
+| Event Explorer | Search hero, filter chips, collapsible builder, dense table, inspector drawer with raw record | existing suite + rendered review |
+| Network Analyzer | Capture strip, conversations, packet table with protocol/frame/encrypted chips, protocol hierarchy and hex view | rendered review |
+| Alerts / Investigations / Data Sources / Settings | Redesigned on shared primitives with severity icon+label+colour, KPI strips, timelines, drop zone, storage and startup controls | 102 frontend tests + rendered review |
+| Interaction | Hover/selected states, tooltips, skeleton loading, reduced-motion support | component tests |
+
+### Quality overhaul (0.2.0)
 
 | Area | Change | Verified by |
 |------|--------|-------------|
@@ -84,8 +97,8 @@ been executed on the development machine.
 
 | Item | Value |
 |------|-------|
-| Application binary | `src-tauri/target/release/nullplinth.exe`, version 0.2.0 |
-| Installer | `src-tauri/target/release/bundle/nsis/NULLPLINTH_0.2.0_x64-setup.exe` |
+| Application binary | `src-tauri/target/release/nullplinth.exe`, version 0.3.0 |
+| Installer | `src-tauri/target/release/bundle/nsis/NULLPLINTH_0.3.0_x64-setup.exe` |
 | Installer test | silent install, launch from installed location, silent uninstall |
 | Signature | not code signed (SmartScreen warning expected) |
 | License | MIT, see LICENSE |

@@ -50,5 +50,6 @@ desktop.ini
 # QA screenshots captured from the desktop build
 shots/
 shots*/
+review*/
 probe-tauri/
 scripts/out/

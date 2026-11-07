@@ -1,0 +1,11 @@
+const list = await (await fetch("http://127.0.0.1:9223/json")).json();
+const page = list.find((t) => t.type === "page");
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+await new Promise((r) => ws.addEventListener("open", r, { once: true }));
+let id = 1; const pending = new Map();
+ws.addEventListener("message", (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
+const send = (method, params = {}) => { const i = id++; ws.send(JSON.stringify({ id: i, method, params })); return new Promise((res, rej) => pending.set(i, (m) => m.error ? rej(new Error(m.error.message)) : res(m.result))); };
+const expr = "JSON.stringify([...document.querySelectorAll('svg')].map(s => ({ cls: String(s.getAttribute('class')||''), w: Math.round(s.getBoundingClientRect().width), h: Math.round(s.getBoundingClientRect().height), panel: (s.closest('.panel')?.querySelector('.panel__title, .section-label, h2, h3')?.textContent || '').trim().slice(0, 40) })))";
+const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true });
+console.log(r.result.value);
+ws.close();

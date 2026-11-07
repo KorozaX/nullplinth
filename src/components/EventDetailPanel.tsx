@@ -1,13 +1,20 @@
 import type { Mode } from "../lib/mode";
 import type { EventDetail } from "../types/contracts";
-import { formatEndpoint, formatJson, formatTimestamp, formatValue } from "../lib/format";
-import { SeverityBadge } from "./ui/Badge";
+import {
+  formatEndpoint,
+  formatFieldLabel,
+  formatJson,
+  formatTimestamp,
+  formatValue,
+} from "../lib/format";
+import { protocolKind, protocolLabel, protocolColor } from "../lib/semantic";
+import { ProtocolChip, SeverityBadge } from "./ui/Badge";
 import { ErrorState, LoadingState } from "./ui/Feedback";
 
 function severityMeaning(severity: string): string {
   switch (severity.toLowerCase()) {
     case "critical":
-      return "this was flagged as an immediate risk and should be reviewed first";
+      return "this was rated an immediate risk and should be reviewed first";
     case "high":
       return "this looks like a serious event that deserves attention";
     case "medium":
@@ -38,38 +45,73 @@ export function EventDetailPanel({
   const rows: Array<{ key: string; value: string }> = [
     { key: "Timestamp", value: formatTimestamp(event.ts, mode) },
     { key: "Severity", value: event.severity },
-    { key: "Source", value: formatEndpoint(event.srcIp, event.srcPort) },
-    { key: "Destination", value: formatEndpoint(event.dstIp, event.dstPort) },
+    { key: "Source format", value: formatValue(event.sourceType) },
     { key: "Category", value: formatValue(event.category) },
     { key: "Event type", value: formatValue(event.eventType) },
     { key: "Action", value: formatValue(event.action) },
+    { key: "Source IP", value: formatEndpoint(event.srcIp, event.srcPort) },
+    { key: "Destination IP", value: formatEndpoint(event.dstIp, event.dstPort) },
+    { key: "Transport", value: formatValue(event.transport) },
+    { key: "App protocol", value: formatValue(event.appProto) },
     { key: "User", value: formatValue(event.username) },
     { key: "Host", value: formatValue(event.hostname) },
     { key: "Process", value: formatValue(event.processName) },
-    { key: "Transport", value: formatValue(event.transport) },
-    { key: "Application protocol", value: formatValue(event.appProto) },
-    { key: "Source format", value: formatValue(event.sourceType) },
     { key: "Dataset", value: formatValue(detail.datasetName) },
     { key: "Event ID", value: String(event.id) },
   ];
-  const visibleRows = mode === "beginner" ? rows.filter((row) => row.key !== "Event ID" && row.key !== "Transport") : rows;
+  const visibleRows =
+    mode === "beginner"
+      ? rows.filter((row) => row.key !== "Event ID" && row.key !== "Transport" && row.key !== "Process")
+      : rows;
+
+  const related = [
+    event.srcIp ? { label: "source", value: formatEndpoint(event.srcIp, event.srcPort) } : null,
+    event.dstIp ? { label: "destination", value: formatEndpoint(event.dstIp, event.dstPort) } : null,
+    event.transport ? { label: "transport", value: formatValue(event.transport) } : null,
+    event.hostname ? { label: "host", value: formatValue(event.hostname) } : null,
+    event.username ? { label: "user", value: formatValue(event.username) } : null,
+  ].filter((entry): entry is { label: string; value: string } => entry !== null);
 
   return (
     <div className="detail-grid">
-      <div className="detail-section">
-        <div className="row">
-          <SeverityBadge severity={event.severity} />
-          <span className="badge badge--neutral mono">{event.sourceType}</span>
-        </div>
-        <p className="why-matters">{formatValue(event.message)}</p>
+      <div className="detail-head">
+        <SeverityBadge severity={event.severity} />
+        {event.appProto ? <ProtocolChip protocol={event.appProto} /> : null}
+        <span className="chip chip--other">{formatValue(event.sourceType)}</span>
+        {event.transport ? <span className="chip chip--other">{protocolLabel(event.transport)}</span> : null}
       </div>
 
-      <div className="detail-section">
+      <div className="inspector-summary">{formatValue(event.message)}</div>
+
+      {related.length > 0 ? (
+        <div className="inspector-section">
+          <h3 className="subhead">Related values</h3>
+          <div className="related-list">
+            {related.map((entry) => (
+              <span className="chip chip--other" key={entry.label + entry.value}>
+                <span
+                  className="chip__dot"
+                  style={{
+                    background:
+                      entry.label === "transport" || entry.label === "destination"
+                        ? protocolColor(protocolKind(event.appProto))
+                        : "var(--fg-dim)",
+                  }}
+                  aria-hidden="true"
+                />
+                {entry.label}: {entry.value}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="inspector-section">
         <h3 className="subhead">Normalized fields</h3>
         <dl className="kv">
           {visibleRows.map((row) => (
             <div key={row.key} style={{ display: "contents" }}>
-              <dt className="kv__key">{row.key}</dt>
+              <dt className="kv__key">{formatFieldLabel(row.key)}</dt>
               <dd className="kv__val">{row.value}</dd>
             </div>
           ))}
@@ -84,18 +126,16 @@ export function EventDetailPanel({
               This record came from a {formatValue(event.sourceType)} file. The importer rated it{" "}
               {formatValue(event.severity)}, which means {severityMeaning(event.severity)}.
             </p>
-            <p>
-              Log data is stored exactly as it was imported and is only displayed as text. Nothing here is executed.
-            </p>
+            <p>Imported data is stored exactly as received and only ever displayed as text. Nothing here is executed.</p>
           </div>
         </details>
       ) : (
         <>
-          <div className="detail-section">
+          <div className="inspector-section">
             <h3 className="subhead">Unmapped attributes</h3>
             <pre className="codeblock">{formatJson(detail.attrs)}</pre>
           </div>
-          <div className="detail-section">
+          <div className="inspector-section">
             <h3 className="subhead">Original record</h3>
             <pre className="codeblock">{formatJson(detail.raw)}</pre>
           </div>

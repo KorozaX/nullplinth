@@ -40,4 +40,20 @@ describe("AppShell shortcuts and layout", () => {
     renderShell();
     expect(screen.getByRole("button", { name: /fullscreen/i })).toBeInTheDocument();
   });
+
+  it("routes the global search query to the event explorer", () => {
+    const onSelect = vi.fn();
+    const onSearch = vi.fn();
+    render(
+      <ModeProvider>
+        <AppShell section="overview" onSelect={onSelect} onSearch={onSearch}>
+          <div>content</div>
+        </AppShell>
+      </ModeProvider>,
+    );
+    const input = screen.getByLabelText("Global search");
+    fireEvent.change(input, { target: { value: " failed login " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSearch).toHaveBeenCalledWith("failed login");
+  });
 });

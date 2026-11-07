@@ -3,7 +3,7 @@ import type { LucideIcon } from "lucide-react";
 
 import { cx } from "../../lib/cx";
 
-type Variant = "default" | "primary" | "danger" | "ghost";
+type Variant = "default" | "primary" | "secondary" | "danger" | "ghost";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;

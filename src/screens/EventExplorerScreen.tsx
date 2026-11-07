@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { Download, Inbox, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Download, Inbox, RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 
 import { api } from "../services/api";
 import type { EventDetail, EventQuery, EventRow, FilterRow } from "../types/contracts";
@@ -7,8 +7,15 @@ import { useMode } from "../context/ModeContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { errorMessage, useLoad } from "../lib/async";
 import { pickSavePath } from "../lib/dialog";
-import { formatDuration, formatEndpoint, formatNumber, formatTimestamp, formatValue } from "../lib/format";
-import { EVENT_FIELDS, validateFilterRow } from "../lib/filterFields";
+import {
+  formatDuration,
+  formatEndpoint,
+  formatFieldLabel,
+  formatNumber,
+  formatTimestamp,
+  formatValue,
+} from "../lib/format";
+import { EVENT_FIELDS, OPERATORS, validateFilterRow } from "../lib/filterFields";
 import { RANGE_PRESETS, parseDateTimeInput, presetWindow } from "../lib/timeRange";
 import type { RangePreset } from "../lib/timeRange";
 import { Button } from "../components/ui/Button";
@@ -19,12 +26,18 @@ import { ProtocolChip, SeverityBadge } from "../components/ui/Badge";
 import { DataTable, Pagination } from "../components/ui/Table";
 import type { Column, SortState } from "../components/ui/Table";
 import { Drawer } from "../components/ui/Drawer";
+import { FilterChip } from "../components/ui/FilterChips";
 import { FilterBuilder } from "../components/FilterBuilder";
 import { EventDetailPanel } from "../components/EventDetailPanel";
 
 const PAGE_SIZES = [25, 50, 100, 250] as const;
 
-export function EventExplorerScreen() {
+export interface EventExplorerScreenProps {
+  /** Text pushed in from the global search box. */
+  initialText?: string;
+}
+
+export function EventExplorerScreen({ initialText = "" }: EventExplorerScreenProps) {
   const { mode, isAnalyst } = useMode();
   const { version } = useWorkspace();
   const datasets = useLoad(() => api.listDatasets(), [version]);
@@ -34,7 +47,8 @@ export function EventExplorerScreen() {
   const [rangePreset, setRangePreset] = useState<RangePreset>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
+  const [showBuilder, setShowBuilder] = useState(false);
   const [sort, setSort] = useState("ts");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
@@ -48,6 +62,11 @@ export function EventExplorerScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"csv" | "json" | null>(null);
+
+  useEffect(() => {
+    setText(initialText);
+    setPage(1);
+  }, [initialText]);
 
   const range = useMemo(() => {
     if (rangePreset === "custom") {
@@ -80,6 +99,51 @@ export function EventExplorerScreen() {
 
   const results = useLoad(() => api.searchEvents(query), [JSON.stringify(query), version]);
 
+  const datasetLabel =
+    datasetFilter === "all"
+      ? "All datasets"
+      : (datasets.data ?? []).find((dataset) => dataset.id === datasetFilter)?.name ?? "Dataset";
+  const rangeLabel = RANGE_PRESETS.find((preset) => preset.id === rangePreset)?.label ?? "All time";
+  const invalidFilterCount = filterErrors.filter((error) => error !== null).length;
+  const activeChips: Array<{ key: string; label: string; value: string; remove: () => void }> = [];
+
+  if (datasetFilter !== "all") {
+    activeChips.push({
+      key: "dataset",
+      label: "Dataset",
+      value: datasetLabel,
+      remove: () => {
+        setDatasetFilter("all");
+        setPage(1);
+      },
+    });
+  }
+  if (rangePreset !== "all") {
+    activeChips.push({
+      key: "range",
+      label: "Range",
+      value: rangeLabel,
+      remove: () => {
+        setRangePreset("all");
+        setPage(1);
+      },
+    });
+  }
+  filters.forEach((row, index) => {
+    if (filterErrors[index] !== null) return;
+    const operator = OPERATORS.find((candidate) => candidate.op === row.op);
+    const value = operator && !operator.needsValue ? operator.label : operator ? operator.label + " " + row.value : row.value;
+    activeChips.push({
+      key: "filter-" + String(index),
+      label: formatFieldLabel(row.field),
+      value,
+      remove: () => {
+        setFilters(filters.filter((_candidate, position) => position !== index));
+        setPage(1);
+      },
+    });
+  });
+
   function changeFilters(next: FilterRow[]) {
     setFilters(next);
     setPage(1);
@@ -103,11 +167,6 @@ export function EventExplorerScreen() {
   function handleSort(next: SortState) {
     setSort(next.key);
     setSortDir(next.direction);
-    setPage(1);
-  }
-
-  function changePageSize(value: number) {
-    setPageSize(value);
     setPage(1);
   }
 
@@ -167,14 +226,14 @@ export function EventExplorerScreen() {
           header: "Time",
           sortable: true,
           mono: true,
+          width: "156px",
           render: (event: EventRow) => formatTimestamp(event.ts, mode),
-          width: "150px",
         },
         {
           key: "severity",
           header: "Severity",
+          width: "96px",
           render: (event: EventRow) => <SeverityBadge severity={event.severity} />,
-          width: "86px",
         },
         { key: "sourceType", header: "Source type", render: (event: EventRow) => formatValue(event.sourceType) },
         { key: "category", header: "Event category", render: (event: EventRow) => formatValue(event.category) },
@@ -206,14 +265,14 @@ export function EventExplorerScreen() {
           header: "Time",
           sortable: true,
           mono: true,
+          width: "156px",
           render: (event: EventRow) => formatTimestamp(event.ts, mode),
-          width: "150px",
         },
         {
           key: "severity",
           header: "Severity",
+          width: "96px",
           render: (event: EventRow) => <SeverityBadge severity={event.severity} />,
-          width: "86px",
         },
         {
           key: "srcIp",
@@ -241,16 +300,19 @@ export function EventExplorerScreen() {
 
   const resultData = results.data;
   const resultEvents = resultData ? resultData.events : [];
-  const invalidFilterCount = filterErrors.filter((error) => error !== null).length;
+  const pageCount = resultData ? Math.max(1, Math.ceil(resultData.total / Math.max(1, resultData.pageSize))) : 1;
 
   return (
     <div className="page">
-      <div className="page__bar">
-        <p className="page__lede">
-          Build filters step by step instead of writing a query. Combine any number of conditions with AND, choose a
-          time range, then open a row to see the normalized fields next to the untouched original record.
-        </p>
-        <div className="toolbar">
+      <div className="page__head">
+        <div className="page__titles">
+          <h2 className="page__title">Event Explorer</h2>
+          <p className="page__lede">
+            Build conditions instead of writing a query: combine any number of filters with AND, choose a time range,
+            then open a row for the normalized fields next to the untouched original record.
+          </p>
+        </div>
+        <div className="page__actions">
           <Button icon={RefreshCw} variant="ghost" onClick={results.reload} aria-label="Refresh results" />
         </div>
       </div>
@@ -258,86 +320,90 @@ export function EventExplorerScreen() {
       {notice ? <Notice tone="ok">{notice}</Notice> : null}
       {actionError ? <Notice tone="error">{actionError}</Notice> : null}
 
-      <Panel
-        title="Guided search"
-        meta={invalidFilterCount > 0 ? String(invalidFilterCount) + " filter needs a fix" : undefined}
-        actions={
-          <Button size="sm" variant="ghost" icon={SlidersHorizontal} onClick={resetSearch}>
-            Reset
-          </Button>
-        }
-      >
-        <div className="filter-bar">
-          <Field label="Dataset">
-            <Select value={String(datasetFilter)} onChange={(event) => changeDataset(event.target.value)}>
-              <option value="all">All datasets</option>
-              {(datasets.data ?? []).map((dataset) => (
-                <option key={dataset.id} value={String(dataset.id)}>
-                  {dataset.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Time range">
-            <Select value={rangePreset} onChange={(event) => changeRange(event.target.value)}>
-              {RANGE_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          {rangePreset === "custom" ? (
-            <>
-              <Field label="From">
-                <TextInput
-                  type="datetime-local"
-                  value={customFrom}
-                  onChange={(event) => {
-                    setCustomFrom(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </Field>
-              <Field label="To">
-                <TextInput
-                  type="datetime-local"
-                  value={customTo}
-                  onChange={(event) => {
-                    setCustomTo(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </Field>
-            </>
-          ) : null}
-          <Field label="Free text" className="filter-bar__grow">
-            <TextInput
-              value={text}
-              placeholder="Search messages, hosts, users"
-              onChange={(event) => changeText(event.target.value)}
-            />
-          </Field>
-        </div>
+      <Panel flush>
+        <div className="event-search">
+          <div className="event-search__row">
+            <div className="event-search__input">
+              <Search size={15} aria-hidden="true" />
+              <input
+                value={text}
+                placeholder="Search messages, hosts, users"
+                aria-label="Search events"
+                onChange={(event) => changeText(event.target.value)}
+              />
+              {text.length > 0 ? (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Clear search text"
+                  onClick={() => changeText("")}
+                >
+                  <X size={13} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            <Button
+              icon={SlidersHorizontal}
+              variant={showBuilder ? "secondary" : "ghost"}
+              onClick={() => setShowBuilder((current) => !current)}
+            >
+              {showBuilder ? "Hide filters" : "Filters"}
+              {appliedFilters.length > 0 ? " (" + String(appliedFilters.length) + ")" : ""}
+            </Button>
+            <Button variant="ghost" onClick={resetSearch}>
+              Reset
+            </Button>
+          </div>
 
-        <FilterBuilder fields={EVENT_FIELDS} value={filters} onChange={changeFilters} label="Event filters" />
-      </Panel>
-
-      <Panel
-        title="Results"
-        meta={
-          resultData
-            ? formatNumber(resultData.total) +
-              " events in " +
-              formatDuration(resultData.durationMs) +
-              (invalidFilterCount > 0 ? " (invalid filters ignored)" : "")
-            : undefined
-        }
-        actions={
-          <div className="toolbar">
+          <div className="event-search__controls">
+            <Field label="Dataset">
+              <Select value={String(datasetFilter)} onChange={(event) => changeDataset(event.target.value)}>
+                <option value="all">All datasets</option>
+                {(datasets.data ?? []).map((dataset) => (
+                  <option key={dataset.id} value={String(dataset.id)}>
+                    {dataset.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Time range">
+              <Select value={rangePreset} onChange={(event) => changeRange(event.target.value)}>
+                {RANGE_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {rangePreset === "custom" ? (
+              <>
+                <Field label="From">
+                  <TextInput
+                    type="datetime-local"
+                    value={customFrom}
+                    onChange={(event) => {
+                      setCustomFrom(event.target.value);
+                      setPage(1);
+                    }}
+                  />
+                </Field>
+                <Field label="To">
+                  <TextInput
+                    type="datetime-local"
+                    value={customTo}
+                    onChange={(event) => {
+                      setCustomTo(event.target.value);
+                      setPage(1);
+                    }}
+                  />
+                </Field>
+              </>
+            ) : null}
+            <div className="grow" />
             <Button
               size="sm"
               icon={Download}
+              variant="ghost"
               onClick={() => handleExport("csv")}
               disabled={exporting !== null || resultData === null}
             >
@@ -346,12 +412,52 @@ export function EventExplorerScreen() {
             <Button
               size="sm"
               icon={Download}
+              variant="ghost"
               onClick={() => handleExport("json")}
               disabled={exporting !== null || resultData === null}
             >
               {exporting === "json" ? "Exporting" : "JSON"}
             </Button>
           </div>
+
+          <div className="active-filters">
+            <span className="active-filters__label">Active</span>
+            {activeChips.length === 0 ? (
+              <span className="dim">No filters — every event in the selected range is shown.</span>
+            ) : (
+              <>
+                {activeChips.map((chip) => (
+                  <FilterChip key={chip.key} label={chip.label} value={chip.value} onRemove={chip.remove} />
+                ))}
+                <Button size="sm" variant="ghost" onClick={resetSearch}>
+                  Clear all
+                </Button>
+              </>
+            )}
+            {invalidFilterCount > 0 ? (
+              <span className="filters__note--warn">
+                {String(invalidFilterCount)} filter{invalidFilterCount === 1 ? "" : "s"} waiting for a valid value
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {showBuilder ? (
+          <div className="filter-builder">
+            <FilterBuilder fields={EVENT_FIELDS} value={filters} onChange={changeFilters} label="Event filters" />
+          </div>
+        ) : null}
+      </Panel>
+
+      <Panel
+        title="Results"
+        meta={
+          resultData
+            ? formatNumber(resultData.total) +
+              " events · " +
+              formatDuration(resultData.durationMs) +
+              (invalidFilterCount > 0 ? " · invalid filters ignored" : "")
+            : undefined
         }
         flush
       >
@@ -376,6 +482,23 @@ export function EventExplorerScreen() {
           />
         ) : (
           <>
+            <div className="event-meta" style={{ padding: "var(--s-3) var(--s-6)" }}>
+              <span>
+                page {resultData ? resultData.page : page} of {pageCount}
+              </span>
+              <span className="dot" aria-hidden="true" />
+              <span>
+                {String(appliedFilters.length)} filter{appliedFilters.length === 1 ? "" : "s"} applied
+              </span>
+              {text.trim().length > 0 ? (
+                <>
+                  <span className="dot" aria-hidden="true" />
+                  <span>text: {text.trim()}</span>
+                </>
+              ) : null}
+              <span className="dot" aria-hidden="true" />
+              <span>{isAnalyst ? "analyst density" : "beginner density"}</span>
+            </div>
             <DataTable
               label="Events"
               columns={columns}
@@ -385,7 +508,7 @@ export function EventExplorerScreen() {
               selectedKey={selectedId}
               sort={{ key: sort, direction: sortDir }}
               onSortChange={handleSort}
-              dense
+              dense={!isAnalyst}
             />
             <Pagination
               page={resultData ? resultData.page : page}
@@ -393,7 +516,10 @@ export function EventExplorerScreen() {
               total={resultData ? resultData.total : 0}
               pageSizes={PAGE_SIZES}
               onPageChange={setPage}
-              onPageSizeChange={changePageSize}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
             />
           </>
         )}

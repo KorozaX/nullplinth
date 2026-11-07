@@ -64,6 +64,10 @@ export function LoadingState({ label = "Loading" }: { label?: string }) {
   );
 }
 
+export function Skeleton({ width = "100%", height = 12 }: { width?: string; height?: number }) {
+  return <span className="skeleton" style={{ width, height: String(height) + "px" }} aria-hidden="true" />;
+}
+
 export function Notice({
   tone = "info",
   children,

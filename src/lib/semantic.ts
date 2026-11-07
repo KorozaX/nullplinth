@@ -87,7 +87,14 @@ export function protocolClass(value: string | null | undefined): string {
 }
 
 export function protocolColor(value: string | null | undefined): string {
-  return "var(--proto-" + protocolKind(value) + ")";
+  const kind = protocolKind(value);
+  const token = kind === "eth" ? "--proto-ether" : "--proto-" + kind;
+  return "var(" + token + ")";
+}
+
+/** CSS wash reference for stacked bars and graph fills. */
+export function severityWash(value: string | null | undefined): string {
+  return "var(--sev-" + normalizeSeverity(value) + "-wash)";
 }
 
 export function frameKindClass(value: string | null | undefined): string {

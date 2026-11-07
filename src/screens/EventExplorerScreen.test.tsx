@@ -37,7 +37,7 @@ describe("EventExplorerScreen", () => {
     renderWithMode(<EventExplorerScreen />);
 
     expect(await screen.findByText("10.0.0.1:1001")).toBeInTheDocument();
-    expect(screen.getByText(/120 results/)).toBeInTheDocument();
+    expect(screen.getAllByText(/120 events/).length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: "Next page" }));
 

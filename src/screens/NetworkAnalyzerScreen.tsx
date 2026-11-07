@@ -18,10 +18,10 @@ import { errorMessage, useLoad } from "../lib/async";
 import { formatBytes, formatDuration, formatEndpoint, formatNumber, formatTimestamp } from "../lib/format";
 import { PACKET_FIELDS, validateFilterRow } from "../lib/filterFields";
 import { Button } from "../components/ui/Button";
-import { EncryptedChip, FrameKindChip, ProtocolChip } from "../components/ui/Badge";
 import { EmptyState, ErrorState, LoadingState, Notice } from "../components/ui/Feedback";
 import { Panel } from "../components/ui/Panel";
 import { Field, Select } from "../components/ui/Field";
+import { EncryptedChip, FrameKindChip, ProtocolChip } from "../components/ui/Badge";
 import { DataTable, Pagination } from "../components/ui/Table";
 import type { Column } from "../components/ui/Table";
 import { FilterBuilder } from "../components/FilterBuilder";
@@ -146,14 +146,14 @@ export function NetworkAnalyzerScreen() {
           header: "No.",
           mono: true,
           align: "right",
-          width: "70px",
+          width: "68px",
           render: (packet: PacketRow) => formatNumber(packet.packetNo),
         },
         {
           key: "ts",
           header: "Time",
           mono: true,
-          width: "150px",
+          width: "156px",
           render: (packet: PacketRow) => formatTimestamp(packet.ts, mode),
         },
         {
@@ -203,14 +203,14 @@ export function NetworkAnalyzerScreen() {
           header: "No.",
           mono: true,
           align: "right",
-          width: "70px",
+          width: "68px",
           render: (packet: PacketRow) => formatNumber(packet.packetNo),
         },
         {
           key: "ts",
           header: "Time",
           mono: true,
-          width: "150px",
+          width: "156px",
           render: (packet: PacketRow) => formatTimestamp(packet.ts, mode),
         },
         {
@@ -248,41 +248,26 @@ export function NetworkAnalyzerScreen() {
 
   const captureList: readonly Capture[] = captures.data ?? [];
   const hasCaptures = captureList.length > 0;
+  const selectedCapture = captureList.find((capture) => capture.id === captureId) ?? null;
   const visiblePackets: readonly PacketRow[] = flowPackets ?? (packets.data ? packets.data.packets : []);
   const activeFlow = (flows.data ?? []).find((flow) => flow.id === activeFlowId) ?? null;
 
-  const captureBar = (
-    <div className="network__bar">
-      <Field label="Capture">
-        <Select
-          value={captureId === null ? "" : String(captureId)}
-          onChange={(event) => changeCapture(event.target.value)}
-          disabled={!hasCaptures}
-        >
-          {hasCaptures ? null : <option value="">No captures</option>}
-          {captureList.map((capture) => (
-            <option key={capture.id} value={String(capture.id)}>
-              {capture.name} ({formatNumber(capture.packetCount)} packets)
-            </option>
-          ))}
-        </Select>
-      </Field>
-      <div className="toolbar">
-        <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
-          Import capture
-        </Button>
-        <Button icon={RefreshCw} variant="ghost" onClick={captures.reload} aria-label="Refresh captures" />
-      </div>
-    </div>
-  );
-
   return (
     <div className="page">
-      <div className="page__bar">
-        <p className="page__lede">
-          Decode captures offline: packets are parsed into protocol layers, grouped into conversations, and shown as a hex
-          dump. Wireless frames are labelled by kind, and encrypted payloads are never decrypted.
-        </p>
+      <div className="page__head">
+        <div className="page__titles">
+          <h2 className="page__title">Network Analyzer</h2>
+          <p className="page__lede">
+            Decode captures offline: packets are parsed into protocol layers, grouped into conversations and shown as a
+            hex dump. Wireless frames are labelled by kind; encrypted payloads are never decrypted.
+          </p>
+        </div>
+        <div className="page__actions">
+          <Button icon={Upload} variant="primary" onClick={() => void beginImport()}>
+            Import capture
+          </Button>
+          <Button icon={RefreshCw} variant="ghost" onClick={captures.reload} aria-label="Refresh captures" />
+        </div>
       </div>
 
       {actionError ? <Notice tone="error">{actionError}</Notice> : null}
@@ -301,153 +286,192 @@ export function NetworkAnalyzerScreen() {
           />
         </Panel>
       ) : (
-        <div className="network">
-          <Panel title="Capture" meta={formatNumber(captureList.length)}>
-            {captureBar}
+        <>
+          <Panel title="Capture" flush>
+            <div className="capture-bar">
+              <div className="capture-bar__left">
+                <Field label="Active capture">
+                  <Select
+                    value={captureId === null ? "" : String(captureId)}
+                    onChange={(event) => changeCapture(event.target.value)}
+                  >
+                    {captureList.map((capture) => (
+                      <option key={capture.id} value={String(capture.id)}>
+                        {capture.name} ({formatNumber(capture.packetCount)} packets)
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                {selectedCapture ? (
+                  <div className="capture-bar__meta">
+                    <span className="chip chip--eth">{selectedCapture.linkType ?? "unknown link"}</span>
+                    <span className="chip chip--other">{formatNumber(selectedCapture.packetCount)} packets</span>
+                    <span className="chip chip--other">{formatBytes(selectedCapture.fileSize)}</span>
+                    <span className="dim mono">{formatTimestamp(selectedCapture.importedAt, mode)}</span>
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </Panel>
 
-          <div className="network__main">
-            <Panel title="Conversations" meta={formatNumber(flows.data ? flows.data.length : 0)} flush>
-              {flows.loading ? (
-                <LoadingState label="Loading conversations" />
-              ) : flows.error ? (
-                <ErrorState message={flows.error} onRetry={flows.reload} />
-              ) : (flows.data ?? []).length === 0 ? (
-                <EmptyState compact icon={Layers} title="No conversations" description="No flow groups found in this capture." />
-              ) : (
-                <div className="record-list flow-list">
-                  {activeFlow ? (
-                    <div className="panel__body">
-                      <Button size="sm" variant="ghost" onClick={clearFlow}>
-                        Show all packets
-                      </Button>
-                    </div>
-                  ) : null}
-                  {(flows.data ?? []).map((flow) => (
-                    <button
-                      key={flow.id}
-                      type="button"
-                      className={"record" + (flow.id === activeFlowId ? " is-active" : "")}
-                      onClick={() => void selectFlow(flow)}
-                    >
-                      <span className="record__title mono">{formatEndpoint(flow.srcIp, flow.srcPort)}</span>
-                      <span className="record__title mono">{"\u2192 " + formatEndpoint(flow.dstIp, flow.dstPort)}</span>
-                      <span className="record__meta">
-                        <ProtocolChip protocol={flow.transport} label={flow.transport.toUpperCase()} />
-                        <span>{formatNumber(flow.packetCount)} packets</span>
-                        <span>{formatBytes(flow.bytesTotal)}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Panel>
-
-            <Panel
-              title={activeFlow ? "Conversation packets" : "Packets"}
-              meta={
-                activeFlow
-                  ? formatNumber(flowPackets ? flowPackets.length : activeFlow.packetCount) + " packets"
-                  : packets.data
-                    ? formatNumber(packets.data.total) + " in " + formatDuration(packets.data.durationMs)
-                    : undefined
-              }
-              actions={
-                activeFlow ? (
-                  <Button size="sm" variant="ghost" onClick={clearFlow}>
-                    Clear conversation
-                  </Button>
-                ) : undefined
-              }
-              flush
-            >
-              <div className="panel__body">
-                {activeFlow ? null : (
-                  <FilterBuilder fields={PACKET_FIELDS} value={filters} onChange={changeFilters} label="Packet filters" />
-                )}
-              </div>
-              {packets.loading && !activeFlow ? (
-                <LoadingState label="Searching packets" />
-              ) : packets.error && !activeFlow ? (
-                <ErrorState message={packets.error} onRetry={packets.reload} />
-              ) : visiblePackets.length === 0 ? (
-                <EmptyState
-                  compact
-                  icon={Inbox}
-                  title={activeFlow ? "No packets in this conversation" : "No packets match the filters"}
-                  description={activeFlow ? undefined : "Clear a filter or import a capture with packets."}
-                />
-              ) : (
-                <>
-                  <DataTable
-                    label="Packets"
-                    columns={columns}
-                    rows={visiblePackets}
-                    rowKey={(packet: PacketRow) => packet.id}
-                    onRowClick={(packet: PacketRow) => void openPacket(packet.id)}
-                    selectedKey={selectedPacketId}
-                    dense
+          <div className="network-grid">
+            <div className="network-main">
+              <Panel
+                title="Conversations"
+                meta={formatNumber(flows.data ? flows.data.length : 0)}
+                actions={
+                  activeFlow ? (
+                    <Button size="sm" variant="ghost" onClick={clearFlow}>
+                      Show all traffic
+                    </Button>
+                  ) : undefined
+                }
+                flush
+              >
+                {flows.loading ? (
+                  <LoadingState label="Loading conversations" />
+                ) : flows.error ? (
+                  <ErrorState message={flows.error} onRetry={flows.reload} />
+                ) : (flows.data ?? []).length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon={Layers}
+                    title="No conversations"
+                    description="No flow groups were found in this capture."
                   />
-                  {activeFlow ? null : (
-                    <Pagination
-                      page={packets.data ? packets.data.page : page}
-                      pageSize={packets.data ? packets.data.pageSize : pageSize}
-                      total={packets.data ? packets.data.total : 0}
-                      pageSizes={PAGE_SIZES}
-                      onPageChange={setPage}
-                      onPageSizeChange={(size) => {
-                        setPageSize(size);
-                        setPage(1);
-                      }}
-                    />
-                  )}
-                </>
-              )}
-            </Panel>
-          </div>
-
-          <div className="network__inspect">
-            <Panel
-              title="Decoded layers"
-              meta={packetDetail ? "Packet " + String(packetDetail.packet.packetNo) : undefined}
-            >
-              {detailLoading ? (
-                <LoadingState label="Decoding packet" />
-              ) : detailError ? (
-                <ErrorState message={detailError} />
-              ) : packetDetail ? (
-                <div className="stack--tight">
-                  <div className="cell-chips">
-                    <ProtocolChip protocol={packetDetail.packet.protocol} />
-                    <FrameKindChip frameKind={packetDetail.packet.frameKind} />
-                    <EncryptedChip encrypted={packetDetail.packet.encrypted} />
+                ) : (
+                  <div className="conversation-list">
+                    {(flows.data ?? []).map((flow) => (
+                      <button
+                        key={flow.id}
+                        type="button"
+                        className={"conversation-row" + (flow.id === activeFlowId ? " is-active" : "")}
+                        onClick={() => void selectFlow(flow)}
+                      >
+                        <span className="conversation-row__pair">
+                          <span className="conversation-row__end">{formatEndpoint(flow.srcIp, flow.srcPort)}</span>
+                          <span className="conversation-row__end">
+                            {"\u2192 " + formatEndpoint(flow.dstIp, flow.dstPort)}
+                          </span>
+                        </span>
+                        <span className="conversation-row__meta">
+                          <ProtocolChip protocol={flow.transport} label={flow.transport.toUpperCase()} />
+                          {formatNumber(flow.packetCount)} pkts
+                          <span className="dim">{formatBytes(flow.bytesTotal)}</span>
+                        </span>
+                      </button>
+                    ))}
                   </div>
-                  {packetDetail.unsupported ? <Notice tone="error">{packetDetail.unsupported}</Notice> : null}
-                  <LayerTree layers={packetDetail.layers} />
+                )}
+              </Panel>
+
+              <Panel
+                title={activeFlow ? "Conversation packets" : "Packets"}
+                meta={
+                  activeFlow
+                    ? formatNumber(flowPackets ? flowPackets.length : activeFlow.packetCount) + " packets"
+                    : packets.data
+                      ? formatNumber(packets.data.total) + " in " + formatDuration(packets.data.durationMs)
+                      : undefined
+                }
+                actions={
+                  activeFlow ? (
+                    <Button size="sm" variant="ghost" onClick={clearFlow}>
+                      Clear conversation
+                    </Button>
+                  ) : undefined
+                }
+                flush
+              >
+                <div style={{ padding: "var(--s-4) var(--s-6)" }}>
+                  {activeFlow ? null : (
+                    <FilterBuilder fields={PACKET_FIELDS} value={filters} onChange={changeFilters} label="Packet filters" />
+                  )}
                 </div>
-              ) : (
-                <EmptyState
-                  compact
-                  icon={Layers}
-                  title="No packet selected"
-                  description="Choose a packet in the list to inspect its decoded layers."
-                />
-              )}
-            </Panel>
-            <Panel title="Hex + ASCII">
-              {packetDetail ? (
-                <HexView hex={packetDetail.hex} ascii={packetDetail.ascii} />
-              ) : (
-                <EmptyState
-                  compact
-                  icon={Layers}
-                  title="No packet selected"
-                  description="Raw bytes appear here as 16 bytes per line."
-                />
-              )}
-            </Panel>
+                {packets.loading && !activeFlow ? (
+                  <LoadingState label="Searching packets" />
+                ) : packets.error && !activeFlow ? (
+                  <ErrorState message={packets.error} onRetry={packets.reload} />
+                ) : visiblePackets.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon={Inbox}
+                    title={activeFlow ? "No packets in this conversation" : "No packets match the filters"}
+                    description={activeFlow ? undefined : "Clear a filter or import a capture with packets."}
+                  />
+                ) : (
+                  <>
+                    <DataTable
+                      label="Packets"
+                      columns={columns}
+                      rows={visiblePackets}
+                      rowKey={(packet: PacketRow) => packet.id}
+                      onRowClick={(packet: PacketRow) => void openPacket(packet.id)}
+                      selectedKey={selectedPacketId}
+                      dense
+                    />
+                    {activeFlow ? null : (
+                      <Pagination
+                        page={packets.data ? packets.data.page : page}
+                        pageSize={packets.data ? packets.data.pageSize : pageSize}
+                        total={packets.data ? packets.data.total : 0}
+                        pageSizes={PAGE_SIZES}
+                        onPageChange={setPage}
+                        onPageSizeChange={(size) => {
+                          setPageSize(size);
+                          setPage(1);
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+              </Panel>
+            </div>
+
+            <div className="network-inspector">
+              <Panel
+                title="Decoded layers"
+                meta={packetDetail ? "Packet " + String(packetDetail.packet.packetNo) : undefined}
+              >
+                {detailLoading ? (
+                  <LoadingState label="Decoding packet" />
+                ) : detailError ? (
+                  <ErrorState message={detailError} />
+                ) : packetDetail ? (
+                  <div className="stack--tight">
+                    <div className="cell-chips">
+                      <ProtocolChip protocol={packetDetail.packet.protocol} />
+                      <FrameKindChip frameKind={packetDetail.packet.frameKind} />
+                      <EncryptedChip encrypted={packetDetail.packet.encrypted} />
+                    </div>
+                    {packetDetail.unsupported ? <Notice tone="error">{packetDetail.unsupported}</Notice> : null}
+                    <LayerTree layers={packetDetail.layers} />
+                  </div>
+                ) : (
+                  <EmptyState
+                    compact
+                    icon={Layers}
+                    title="No packet selected"
+                    description="Choose a packet to inspect its decoded protocol hierarchy."
+                  />
+                )}
+              </Panel>
+
+              <Panel title="Hex + ASCII">
+                {packetDetail ? (
+                  <HexView hex={packetDetail.hex} ascii={packetDetail.ascii} />
+                ) : (
+                  <EmptyState
+                    compact
+                    icon={Layers}
+                    title="No packet selected"
+                    description="Raw bytes appear here as 16 bytes per line, synced to the selected packet."
+                  />
+                )}
+              </Panel>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

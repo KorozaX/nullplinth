@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Upload, X } from "lucide-react";
+import { Upload } from "lucide-react";
 
 import { api } from "../services/api";
 import { useWorkspace } from "../context/WorkspaceContext";
@@ -9,6 +9,7 @@ import { pickFile } from "../lib/dialog";
 import { fileName } from "../lib/format";
 import { demoSuccessMessage, importSuccessMessage } from "../lib/importResults";
 import { ACCEPTED_LABEL, classifyFile, fileExtension, LOG_FILE_FILTERS } from "../lib/importRouting";
+import { Toast } from "./ui/Toast";
 import { CsvWizard } from "./CsvWizard";
 import { ImportPreviewDialog } from "./ImportPreviewDialog";
 import type { ImportOutcome } from "./ImportPreviewDialog";
@@ -221,21 +222,7 @@ export function ImportProvider({ children }: { children: ReactNode }) {
         </div>
       ) : null}
 
-      {toast ? (
-        <div className="toast-stack">
-          <div className={"toast toast--" + toast.tone} role={toast.tone === "error" ? "alert" : "status"}>
-            <span>{toast.message}</span>
-            <button
-              type="button"
-              className="btn btn--ghost btn--icon btn--sm toast__close"
-              aria-label="Dismiss notification"
-              onClick={() => setToast(null)}
-            >
-              <X size={12} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {toast ? <Toast tone={toast.tone} message={toast.message} onDismiss={() => setToast(null)} /> : null}
     </ImportContext.Provider>
   );
 }

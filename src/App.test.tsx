@@ -38,6 +38,7 @@ vi.mock("./services/api", () => ({
     clearWorkspace: vi.fn(),
     getPreferences: vi.fn(),
     savePreferences: vi.fn(),
+    networkTopology: vi.fn(),
   },
 }));
 
@@ -49,6 +50,8 @@ import {
   demoCapture,
   demoDataset,
   demoInvestigation,
+  demoTopology,
+  emptyTopology,
   emptyOverview,
   eventRow,
   flowRow,
@@ -78,6 +81,7 @@ beforeEach(() => {
   vi.mocked(api.listAlerts).mockResolvedValue([]);
   vi.mocked(api.listInvestigations).mockResolvedValue([]);
   vi.mocked(api.getSettings).mockResolvedValue(defaultSettings);
+  vi.mocked(api.networkTopology).mockResolvedValue(emptyTopology);
   vi.mocked(api.workspaceState).mockResolvedValue({
     hasData: false,
     datasets: 0,
@@ -179,6 +183,20 @@ describe("App shell", () => {
     expect(screen.getByRole("button", { name: "Import CSV" })).toBeInTheDocument();
   });
 
+  it("routes the global search into the Event Explorer free-text field", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const globalSearch = await screen.findByLabelText("Global search");
+    await user.type(globalSearch, "failed login{Enter}");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Event Explorer" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search messages, hosts, users")).toHaveValue("failed login");
+    expect(vi.mocked(api.searchEvents)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "failed login" }),
+    );
+  });
+
   it("renders each screen with mocked backend data", async () => {
     const user = userEvent.setup();
     vi.mocked(api.getOverview).mockResolvedValue(populatedOverview);
@@ -201,6 +219,7 @@ describe("App shell", () => {
     vi.mocked(api.listFlows).mockResolvedValue([flowRow(1)]);
     vi.mocked(api.listAlerts).mockResolvedValue([bruteForceAlert]);
     vi.mocked(api.listInvestigations).mockResolvedValue([demoInvestigation]);
+    vi.mocked(api.networkTopology).mockResolvedValue(demoTopology);
 
     render(<App />);
 

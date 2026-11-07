@@ -22,25 +22,25 @@ export const SECTIONS: readonly SectionDef[] = [
   {
     id: "overview",
     label: "Overview",
-    description: "Workbench summary across every imported dataset and capture",
+    description: "Workbench summary across imported datasets and captures",
     icon: LayoutDashboard,
   },
   {
     id: "events",
     label: "Event Explorer",
-    description: "Search and inspect normalized log events with the guided filter builder",
+    description: "Search and inspect normalized log events",
     icon: FolderSearch,
   },
   {
     id: "network",
     label: "Network Analyzer",
-    description: "Inspect packet captures, decoded layers and conversations",
+    description: "Inspect packet captures, layers and conversations",
     icon: Network,
   },
   {
     id: "alerts",
     label: "Alerts",
-    description: "Detection results, plain-language explanations and evidence",
+    description: "Detection results, explanations and evidence",
     icon: AlertTriangle,
   },
   {
@@ -52,13 +52,13 @@ export const SECTIONS: readonly SectionDef[] = [
   {
     id: "sources",
     label: "Data Sources",
-    description: "Imported datasets and packet captures stored on this machine",
+    description: "Imported datasets and packet captures on this machine",
     icon: Activity,
   },
   {
     id: "settings",
     label: "Settings",
-    description: "Detection thresholds and application information",
+    description: "Detection thresholds, startup and workspace",
     icon: Settings,
   },
 ];

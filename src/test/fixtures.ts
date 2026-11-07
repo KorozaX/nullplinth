@@ -1,5 +1,6 @@
 import type {
   Alert,
+  Topology,
   Capture,
   Dataset,
   DetectionSettings,
@@ -147,6 +148,19 @@ export const defaultSettings: DetectionSettings = {
   failedConnWindowSecs: 300,
 };
 
+export const emptyTopology: Topology = { nodes: [], edges: [], truncated: false };
+
+export const demoTopology: Topology = {
+  nodes: [
+    { id: "10.0.0.5", label: "10.0.0.5", kind: "internal", events: 120, alerts: 2, severity: "critical", lastSeen: 1767225845000 },
+    { id: "203.0.113.44", label: "203.0.113.44", kind: "external", events: 40, alerts: 0, severity: "none", lastSeen: 1767225840000 },
+  ],
+  edges: [
+    { source: "10.0.0.5", target: "203.0.113.44", events: 30, transport: "tcp", appProto: "tls", severity: "critical" },
+  ],
+  truncated: false,
+};
+
 export const emptyOverview: Overview = {
   totalEvents: 0,
   datasetCount: 0,
@@ -160,6 +174,9 @@ export const emptyOverview: Overview = {
   topDstIps: [],
   protocolDistribution: [],
   categoryDistribution: [],
+  eventSeverityDistribution: [],
+  topPorts: [],
+  topHosts: [],
   volumeSeries: [],
   flowSummary: { flowCount: 0, totalBytes: 0, tcpFlows: 0, udpFlows: 0 },
 };
@@ -180,6 +197,19 @@ export const populatedOverview: Overview = {
   topDstIps: [{ key: "10.0.0.5", count: 19 }],
   protocolDistribution: [{ key: "tls", count: 12 }],
   categoryDistribution: [{ key: "authentication", count: 27 }],
+  eventSeverityDistribution: [
+    { key: "critical", count: 2 },
+    { key: "high", count: 1 },
+    { key: "info", count: 1231 },
+  ],
+  topPorts: [
+    { key: "443", count: 612 },
+    { key: "22", count: 88 },
+  ],
+  topHosts: [
+    { key: "srv-dc01", count: 210 },
+    { key: "ws-01", count: 120 },
+  ],
   volumeSeries: [
     { ts: 1767218400000, count: 10 },
     { ts: 1767222000000, count: 42 },
